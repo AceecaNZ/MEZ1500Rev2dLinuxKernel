@@ -39,6 +39,7 @@
 
 
 // Testing
+// For Steve to see this:
 
 // Testing 456
 
@@ -198,6 +199,7 @@ static int sbc2440_mzio_ioctl(
 			return -EINVAL;
 	}
 }
+
 
 static int sbc2440_mzio_read(struct file *filp, char *buffer, size_t count, loff_t *ppos)
 {
