@@ -195,6 +195,7 @@ static int sbc2440_mzio_ioctl(
 	}
 }
 
+
 static int sbc2440_mzio_read(struct file *filp, char *buffer, size_t count, loff_t *ppos)
 {
 	char str[20];
