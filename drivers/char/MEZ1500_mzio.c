@@ -38,6 +38,9 @@
 
 
 
+// Testing
+
+
 
 static volatile unsigned int GPIO_table [] = {
 	S3C2410_GPD(0), 	// MZIO_MOD_RESET
