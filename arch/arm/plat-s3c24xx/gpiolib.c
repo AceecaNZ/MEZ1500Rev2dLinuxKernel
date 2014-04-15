@@ -163,7 +163,7 @@ struct s3c_gpio_chip s3c24xx_gpios[] = {
 			.ngpio			= 11,
 		},
 	},
-	
+
 //#ifdef CONFIG_CPU_S3C244X
 	[8] = {
    .base   = S3C2440_GPJCON,

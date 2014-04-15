@@ -24,6 +24,8 @@
 #include <asm/unistd.h>
 #include "MEZ1500_mzio.h"
 
+#include <mach/regs-gpioj.h>
+
 #undef DEBUG
 #define DEBUG
 #ifdef DEBUG
@@ -37,7 +39,7 @@
 
 
 
-static unsigned int GPIO_table [] = {
+static volatile unsigned int GPIO_table [] = {
 	S3C2410_GPD(0), 	// MZIO_MOD_RESET
 	S3C2410_GPD(1),		// MZIO_MOD_PWR
 	
@@ -50,7 +52,9 @@ static unsigned int GPIO_table [] = {
 	S3C2410_GPJ(5),		// MZIO_CAMIF_DAT5
 	S3C2410_GPJ(6),		// MZIO_CAMIF_DAT6
 	S3C2410_GPJ(7),		// MZIO_CAMIF_DAT7          
-	                     
+
+	S3C2410_GPC(8),		// 5V_MZ_ENn
+		                     
 	// Add more MZIO gpios here
 	0
 };
@@ -95,66 +99,96 @@ static int sbc2440_mzio_ioctl(
 	unsigned int cmd, 
 	unsigned long arg)
 {	
-	printk("cmd=0x%x\n", cmd);	
-	printk("arg=0x%lx\n", arg);	
+	//printk("cmd=%d\n", cmd);	
+	//printk("arg=%ld,%d\n", arg, (unsigned int) arg);	
 
 	switch(cmd)
 	{
 		case MZIO_GPIO_SET_HIGH:
-			//if (arg < sizeof(GPIO_table))	
-			{			
+			if (arg < sizeof(GPIO_table))	{			
 				printk("MZIO_GPIO_SET_HIGH\n");	
 				s3c2410_gpio_setpin(GPIO_table[arg], 1);
 			}
 			return 0;
 
 		case MZIO_GPIO_SET_LOW:
-			//if (arg < sizeof(GPIO_table))	
-			{			
+			if (arg < sizeof(GPIO_table))	{			
 				printk("MZIO_GPIO_SET_LOW\n");	
 				s3c2410_gpio_setpin(GPIO_table[arg], 0);
 			}
 			return 0;
 
 		case MZIO_GPIO_SET_DIR_OUT:
-//			if (arg < sizeof(GPIO_table))	
-			{			
+			if (arg < sizeof(GPIO_table))	{			
 				printk("MZIO_GPIO_SET_DIR_OUT\n");	
 				s3c2410_gpio_cfgpin(GPIO_table[arg], S3C2410_GPIO_OUTPUT);
 			}
 			return 0;
 
 		case MZIO_GPIO_SET_DIR_IN:
-			//if (arg < sizeof(GPIO_table))	
-			{			
+			if (arg < sizeof(GPIO_table))	{			
 				printk("MZIO_GPIO_SET_DIR_IN\n");	
 				s3c2410_gpio_cfgpin(GPIO_table[arg], S3C2410_GPIO_INPUT);
 			}
 			return 0;
 
 		case MZIO_GPIO_SET_PU_OFF:
-			//if (arg < sizeof(GPIO_table))	
-			{			
+			if (arg < sizeof(GPIO_table))	{			
 				printk("MZIO_GPIO_SET_PU_OFF\n");	
 				s3c2410_gpio_pullup(GPIO_table[arg], 1);
 			}
 			return 0;
 
 		case MZIO_GPIO_SET_PU_ON:
-			//if (arg < sizeof(GPIO_table))	
-			{						
+			if (arg < sizeof(GPIO_table))	{						
 				printk("MZIO_GPIO_SET_PU_ON\n");	
 				s3c2410_gpio_pullup(GPIO_table[arg], 0);
 			}
 			return 0;
 
 		case MZIO_GPIO_GET:
-			//if (arg < sizeof(GPIO_table))	
-			{			
+			if (arg < sizeof(GPIO_table))	{			
 				printk("MZIO_GPIO_GET\n");	
 				s3c2410_gpio_cfgpin(GPIO_table[arg], S3C2410_GPIO_INPUT);
 			}
 			return s3c2410_gpio_getpin(GPIO_table[arg]);
+			
+		case MZIO_DRIVER_DEBUG:
+			
+			//__raw_writel(0x1555555,S3C2440_GPJCON);
+			//__raw_writel(0xAAAA,S3C2440_GPJDAT);
+			//__raw_writel(0x1FFF,S3C2440_GPJUP);	
+			printk("S3C2440_GPJCON: 0x%x  S3C2440_GPJDAT: 0x%x  S3C2440_GPJUP: 0x%x\n", __raw_readl(S3C2440_GPJCON), __raw_readl(S3C2440_GPJDAT), __raw_readl(S3C2440_GPJUP));	
+			return 0;
+
+
+		case MZIO_CAMIF_SET_CFG:
+			printk("MZIO_CAMIF_SET_CFG\n");	
+			__raw_writel(arg,S3C2440_GPJCON);
+			return 0;
+			
+		case MZIO_CAMIF_GET_CFG:
+			printk("MZIO_CAMIF_GET_CFG\n");	
+			return __raw_readl(S3C2440_GPJCON);
+
+		case MZIO_CAMIF_SET_DAT:
+			printk("MZIO_CAMIF_SET_DAT\n");	
+			__raw_writel(arg,S3C2440_GPJDAT);
+			return 0;
+
+		case MZIO_CAMIF_GET_DAT:
+			printk("MZIO_CAMIF_GET_DAT\n");	
+			return __raw_readl(S3C2440_GPJDAT);
+
+		case MZIO_CAMIF_SET_UP:
+			printk("MZIO_CAMIF_SET_UP\n");	
+			__raw_writel(arg,S3C2440_GPJUP);
+			return 0;
+
+		case MZIO_CAMIF_GET_UP:
+			printk("MZIO_CAMIF_GET_UP\n");	
+			return __raw_readl(S3C2440_GPJUP);
+			
 
 		default:
 			return -EINVAL;
