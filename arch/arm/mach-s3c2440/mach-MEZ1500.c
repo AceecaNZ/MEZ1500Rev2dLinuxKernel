@@ -89,7 +89,7 @@ static struct spi_board_info s3c2410_spi0_board[] = {
 };
 
 static struct s3c2410_spi_info s3c2410_spi0_platdata = {  
-	.pin_cs		= S3C2410_GPD(0),  
+	.pin_cs		= S3C2410_GPJ(5),  
 	.num_cs 	= 1,  
 	.bus_num 	= 0,  
 };

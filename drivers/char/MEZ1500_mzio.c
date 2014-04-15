@@ -111,55 +111,54 @@ static int sbc2440_mzio_ioctl(
 	{
 		case MZIO_GPIO_SET_HIGH:
 			if (arg < sizeof(GPIO_table))	{			
-				printk("MZIO_GPIO_SET_HIGH\n");	
+				//printk("MZIO_GPIO_SET_HIGH\n");	
 				s3c2410_gpio_setpin(GPIO_table[arg], 1);
 			}
 			return 0;
 
 		case MZIO_GPIO_SET_LOW:
 			if (arg < sizeof(GPIO_table))	{			
-				printk("MZIO_GPIO_SET_LOW\n");	
+				//printk("MZIO_GPIO_SET_LOW\n");	
 				s3c2410_gpio_setpin(GPIO_table[arg], 0);
 			}
 			return 0;
 
 		case MZIO_GPIO_SET_DIR_OUT:
 			if (arg < sizeof(GPIO_table))	{			
-				printk("MZIO_GPIO_SET_DIR_OUT\n");	
+				//printk("MZIO_GPIO_SET_DIR_OUT\n");	
 				s3c2410_gpio_cfgpin(GPIO_table[arg], S3C2410_GPIO_OUTPUT);
 			}
 			return 0;
 
 		case MZIO_GPIO_SET_DIR_IN:
 			if (arg < sizeof(GPIO_table))	{			
-				printk("MZIO_GPIO_SET_DIR_IN\n");	
+				//printk("MZIO_GPIO_SET_DIR_IN\n");	
 				s3c2410_gpio_cfgpin(GPIO_table[arg], S3C2410_GPIO_INPUT);
 			}
 			return 0;
 
 		case MZIO_GPIO_SET_PU_OFF:
 			if (arg < sizeof(GPIO_table))	{			
-				printk("MZIO_GPIO_SET_PU_OFF\n");	
+				//printk("MZIO_GPIO_SET_PU_OFF\n");	
 				s3c2410_gpio_pullup(GPIO_table[arg], 1);
 			}
 			return 0;
 
 		case MZIO_GPIO_SET_PU_ON:
 			if (arg < sizeof(GPIO_table))	{						
-				printk("MZIO_GPIO_SET_PU_ON\n");	
+				//printk("MZIO_GPIO_SET_PU_ON\n");	
 				s3c2410_gpio_pullup(GPIO_table[arg], 0);
 			}
 			return 0;
 
 		case MZIO_GPIO_GET:
 			if (arg < sizeof(GPIO_table))	{			
-				printk("MZIO_GPIO_GET\n");	
+				//printk("MZIO_GPIO_GET\n");	
 				s3c2410_gpio_cfgpin(GPIO_table[arg], S3C2410_GPIO_INPUT);
 			}
 			return s3c2410_gpio_getpin(GPIO_table[arg]);
 			
 		case MZIO_DRIVER_DEBUG:
-			
 			//__raw_writel(0x1555555,S3C2440_GPJCON);
 			//__raw_writel(0xAAAA,S3C2440_GPJDAT);
 			//__raw_writel(0x1FFF,S3C2440_GPJUP);	
@@ -168,30 +167,24 @@ static int sbc2440_mzio_ioctl(
 
 
 		case MZIO_CAMIF_SET_CFG:
-			printk("MZIO_CAMIF_SET_CFG\n");	
 			__raw_writel(arg,S3C2440_GPJCON);
 			return 0;
 			
 		case MZIO_CAMIF_GET_CFG:
-			printk("MZIO_CAMIF_GET_CFG\n");	
 			return __raw_readl(S3C2440_GPJCON);
 
 		case MZIO_CAMIF_SET_DAT:
-			printk("MZIO_CAMIF_SET_DAT\n");	
 			__raw_writel(arg,S3C2440_GPJDAT);
 			return 0;
 
 		case MZIO_CAMIF_GET_DAT:
-			printk("MZIO_CAMIF_GET_DAT\n");	
 			return __raw_readl(S3C2440_GPJDAT);
 
 		case MZIO_CAMIF_SET_UP:
-			printk("MZIO_CAMIF_SET_UP\n");	
 			__raw_writel(arg,S3C2440_GPJUP);
 			return 0;
 
 		case MZIO_CAMIF_GET_UP:
-			printk("MZIO_CAMIF_GET_UP\n");	
 			return __raw_readl(S3C2440_GPJUP);
 			
 
