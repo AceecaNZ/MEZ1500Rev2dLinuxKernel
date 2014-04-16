@@ -58,7 +58,6 @@ static volatile unsigned int GPIO_table [] = {
 
 
 
-
 //-----------------------------------------------------------------------------
 //
 // Create a compile date and time stamp
@@ -234,6 +233,13 @@ static void __exit dev_exit(void)
 	printk(DEVICE_NAME"\tgoodbye!\n");
 	misc_deregister(&misc);
 }
+
+static void hello_export(void) {
+	printk(KERN_INFO "Hello from another module");
+} 
+
+EXPORT_SYMBOL(hello_export);
+
 
 module_init(dev_init);
 module_exit(dev_exit);

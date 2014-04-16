@@ -36,6 +36,8 @@
 
 #define DEVICE_NAME "mzio"
 
+extern hello_export();
+
 static volatile unsigned int GPIO_table [] = {
 	S3C2410_GPD(0), 	// MZIO_MOD_RESET
 	S3C2410_GPD(1),		// MZIO_MOD_PWR
@@ -225,6 +227,8 @@ static int __init dev_init(void)
 
 	printk(DEVICE_NAME"\tversion %d%02d%02d%02d%02d\tinitialized\n", GetCompileYear(),
 	GetCompileMonth(), GetCompileDay(), GetCompileHour(), GetCompileMinute());
+	
+	hello_export();
 	
 	return ret;
 }
