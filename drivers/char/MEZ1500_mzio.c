@@ -38,11 +38,7 @@
 
 
 
-// Testing
-// For Steve to see this:
-
-// Testing 789
-
+// Testing 012
 
 static volatile unsigned int GPIO_table [] = {
 	S3C2410_GPD(0), 	// MZIO_MOD_RESET
