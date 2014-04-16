@@ -36,17 +36,6 @@
 
 #define DEVICE_NAME "mzio"
 
-
-
-<<<<<<< 90a9a879dfcfe9324f1680eabc85efe40b1301d8
-// Testing 012
-=======
-// Testing
-// For Steve to see this:
-// Testing 123
-
->>>>>>> 9915d80139de30bf9635bddab3a5d6ec6d9c47e4
-
 static volatile unsigned int GPIO_table [] = {
 	S3C2410_GPD(0), 	// MZIO_MOD_RESET
 	S3C2410_GPD(1),		// MZIO_MOD_PWR
