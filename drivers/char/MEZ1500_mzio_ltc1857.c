@@ -34,9 +34,9 @@
 #define DPRINTK(x...) (void)(0)
 #endif
 
-#define DEVICE_NAME "mzio"
+#define DEVICE_NAME "ltc1857"
 
-extern hello_export();
+extern void hello_export(void);
 
 static volatile unsigned int GPIO_table [] = {
 	S3C2410_GPD(0), 	// MZIO_MOD_RESET
