@@ -132,7 +132,8 @@ static struct s3c2410_uartcfg MEZ1500_uartcfgs[] __initdata = {
 
 #define LCD_WIDTH 240
 #define LCD_HEIGHT 320
-#define LCD_PIXCLOCK 100000
+#define LCD_PIXCLOCK 5600 //100000
+                     
 
 // 2011-01-18 SV: Adjusted for hitachi LCD
 #define LCD_RIGHT_MARGIN 4
