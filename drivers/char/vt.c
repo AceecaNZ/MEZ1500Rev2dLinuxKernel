@@ -600,8 +600,6 @@ static void hide_cursor(struct vc_data *vc)
 
 static void set_cursor(struct vc_data *vc)
 {
-// 2011-04-29 SV: Commented out to stop that console cursor appearing over Qtopia GUI.	
-/*	
 	if (!IS_FG(vc) || console_blanked ||
 	    vc->vc_mode == KD_GRAPHICS)
 		return;
@@ -612,7 +610,7 @@ static void set_cursor(struct vc_data *vc)
 		if ((vc->vc_cursor_type & 0x0f) != 1)
 			vc->vc_sw->con_cursor(vc, CM_DRAW);
 	}
-	else*/
+	else
 		hide_cursor(vc);
 }
 
@@ -1634,8 +1632,7 @@ static void reset_terminal(struct vc_data *vc, int do_clear)
 	/* do not do set_leds here because this causes an endless tasklet loop
 	   when the keyboard hasn't been initialized yet */
 
-// 2011-04-12 SV: Changed
-	vc->vc_cursor_type = CUR_NONE; //CUR_DEFAULT;
+	vc->vc_cursor_type = CUR_DEFAULT;
 	vc->vc_complement_mask = vc->vc_s_complement_mask;
 
 	default_attr(vc);
@@ -1657,6 +1654,7 @@ static void reset_terminal(struct vc_data *vc, int do_clear)
 	save_cur(vc);
 	if (do_clear)
 	    csi_J(vc, 2);
+	    
 }
 
 /* console_sem is held */
@@ -1837,8 +1835,7 @@ static void do_con_trol(struct tty_struct *tty, struct vc_data *vc, int c)
 				if (vc->vc_par[0])
 					vc->vc_cursor_type = vc->vc_par[0] | (vc->vc_par[1] << 8) | (vc->vc_par[2] << 16);
 				else
-					// 2011-04-12 SV: Changed
-					vc->vc_cursor_type = CUR_NONE; //CUR_DEFAULT;
+					vc->vc_cursor_type = CUR_DEFAULT;
 				return;
 			}
 			break;
