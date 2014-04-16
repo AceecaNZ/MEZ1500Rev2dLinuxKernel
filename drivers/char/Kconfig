@@ -111,6 +111,14 @@ config MEZ1500_MZIO
 	help
 	  MEZ1500 MZIO module.
 
+
+config MEZ1500_MZIO_LTC1857
+	tristate "MEZ1500 MZIO LTC1857 module"
+	depends on MACH_MEZ1500
+	default m if MACH_MEZ1500
+	help
+	  MEZ1500 MZIO LTC1857 module.
+
 config LEDS_MEZ1500
 	tristate "LED Support for MEZ1500 GPIO LEDs"
 	depends on MACH_MEZ1500
