@@ -13,7 +13,7 @@
 #include <linux/pci.h>
 #include <linux/gpio.h>
 #include <asm/uaccess.h>	// copy_to_user
-//#include <asm/unistd.h>  // sleep
+//#include <asm/unistd.h>  
 //#include <linux/delay.h>
 //#include <asm/irq.h>
 //#include <linux/mm.h>
@@ -36,6 +36,7 @@
 
 #include "MEZ1500_mzio.h"
 #include "MEZ1500_mzio_ltc185x.h"
+#include "MEZ1500_mzio_ltc185x_prv.h"
 
 
 #undef DEBUG
@@ -92,12 +93,24 @@ static int GetCompileDay   (void){int day   = DAY;         return((char)day);}
 // Timer interrupt handler
 static irqreturn_t TimerINTHandler(int irq,void *TimDev)
 {    
+	unsigned long temp32;
+
+	// Set for LED to toggle
+	temp32 = __raw_readl(S3C2440_GPJDAT);
+	temp32 &= ~(bDAT_CRNT_CN3_EN_N_CAM_DATA2);
+	__raw_writel(temp32, S3C2440_GPJDAT);
+	temp32 |= bDAT_CRNT_CN3_EN_N_CAM_DATA2;
+	__raw_writel(temp32, S3C2440_GPJDAT);
+
   gIntCount++;
+
   if (gIntCount >= 1000)
   {
 		printk("Beep=%d\n", gIntCount);	
 		gIntCount = 0;
 	}
+
+  
   
   return IRQ_HANDLED;
 }
@@ -146,23 +159,6 @@ static int sbc2440_mzio_ltc1857_ioctl(
 
 static int sbc2440_mzio_ltc1857_read(struct file *filp, char *buffer, size_t count, loff_t *ppos)
 {
-/*
-	char str[20];
-	int value;
-	size_t len;
-	
-	s3c2410_gpio_cfgpin(S3C2410_GPD(0), S3C2410_GPIO_INPUT);	
-	value = s3c2410_gpio_getpin(S3C2410_GPD(0));
-	
-	len = sprintf(str, "%d\n", value);
-	if (count >= len) {
-		int r = copy_to_user(buffer, str, len);
-		return r ? r : len;
-	} else {
-		return -EINVAL;
-	}
-exit:
-*/
 	{
 		char 			str[20];
 		size_t 		len;
@@ -176,7 +172,6 @@ exit:
 			return -EINVAL;
 		}			
 	}
-
 	
 	return 0;	
 }
@@ -212,6 +207,7 @@ static int __init dev_init(void)
 	  unsigned TimerCMPB;
 	  static struct clk *timerclk;
 		unsigned long pclk;
+		unsigned long	temp32;
 
 	  gIntCount = 0;
 	  
@@ -237,8 +233,10 @@ pclk=0x30479e8
 	  TimerCNTB = readl(S3C2410_TCNTB(2));
 	  TimerCMPB = readl(S3C2410_TCMPB(2));
 	  
-	  TimerCNTB = 0x0008235;
-	  TimerCMPB = 0x0008235;
+	  temp32 = pclk / (((TimerCfg0 & 0x0000FF00) >> 8) + 1) / 2;   // pclk / (prescalar + 1) / div(=2)
+		printk("temp32=%ld\n", temp32);
+	  TimerCNTB = temp32/1000;  // 1ms 
+	  TimerCMPB = temp32/1000;
 	  
 	  writel(TimerCNTB, S3C2410_TCNTB(2));
 	  writel(TimerCMPB, S3C2410_TCMPB(2));
@@ -261,25 +259,21 @@ pclk=0x30479e8
 		printk("TimerControl=0x%x\n", TimerControl);
 
 	  gIntCount = 0;
-
-		gIntCount = 100;
-	  while (gIntCount--)
-	  {
-		  TimerCNTB = readl(S3C2410_TCNTB(2));
-			printk("TimerCNTB=%d\n", TimerCNTB);
-	  	
-//	  	sleep(1);
-	  }
 	  
-
+	  
+	  // Setup PortJ
+		__raw_writel(bGPCON_CAM_init,S3C2440_GPJCON);
+		__raw_writel(bGPDAT_CAM_init,S3C2440_GPJDAT);
+		__raw_writel(bGPUP_CAM_init,S3C2440_GPJUP);
+		
+		// Set for LED to toggle, init off
+		temp32 = __raw_readl(S3C2440_GPJDAT);
+		temp32 |= bDAT_CRNT_CN3_EN_N_CAM_DATA2;
+		temp32 &= ~(bDAT_CLIM_EN_N_CAM_DATA3);
+		__raw_writel(temp32, S3C2440_GPJDAT);
 	}
 	setup_irq(IRQ_TIMER2, &s3c2410_timer_irq);
 	
-
-
-// 	ret = request_irq(IRQ_TIMER2, TimerINTHandler, IRQF_SHARED, DEVICE_NAME, &LTC185xDev);
-//	if (ret<0) printk("IRQ error=%d\n", ret);
-
 	ret = misc_register(&misc);
 
 	return ret;
