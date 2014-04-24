@@ -1,28 +1,38 @@
-#include <linux/miscdevice.h>
-#include <linux/delay.h>
-#include <asm/irq.h>
-#include <mach/regs-gpio.h>
-#include <mach/hardware.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
-#include <linux/init.h>
-#include <linux/mm.h>
+#include <linux/miscdevice.h>
 #include <linux/fs.h>
 #include <linux/types.h>
-#include <linux/delay.h>
 #include <linux/moduleparam.h>
 #include <linux/slab.h>
-#include <linux/errno.h>
+#include <mach/hardware.h>
+#include <linux/init.h>
 #include <linux/ioctl.h>
 #include <linux/cdev.h>
 #include <linux/string.h>
-#include <linux/list.h>
 #include <linux/pci.h>
 #include <linux/gpio.h>
-#include <asm/uaccess.h>
-#include <asm/atomic.h>
-#include <asm/unistd.h>
+//#include <linux/delay.h>
+//#include <asm/irq.h>
+//#include <linux/mm.h>
+//#include <linux/errno.h>
+//#include <linux/list.h>
+//#include <asm/uaccess.h>
+//#include <asm/atomic.h>
+//#include <asm/unistd.h>
+//#include <linux/spi/spi.h>
+
+#include <mach/map.h>
+#include <mach/regs-clock.h>
+#include <mach/regs-gpio.h>
 #include <mach/regs-gpioj.h>
+#include <plat/regs-timer.h>
+#include <plat/regs-adc.h>
+#include <linux/interrupt.h>
+#include <linux/clk.h>
+#include <linux/irq.h>
+
+
 
 #include "MEZ1500_mzio.h"
 #include "MEZ1500_mzio_ltc185x.h"
@@ -39,6 +49,14 @@
 #define DEVICE_NAME "ltc185x"
 
 extern void hello_export(void);
+
+typedef struct {
+  int delay;
+} LTC185x_DEV;
+static LTC185x_DEV LTC185xDev;
+
+int gIntCount = 0;
+
 
 //-----------------------------------------------------------------------------
 //
@@ -71,6 +89,22 @@ static int GetCompileDay   (void){int day   = DAY;         return((char)day);}
 //-----------------------------------------------------------------------------
 
 
+// Timer interrupt handler
+static irqreturn_t TimerINTHandler(int irq,void *TimDev)
+{    
+  gIntCount++;
+	printk("Beep=%d\n", gIntCount);	
+  
+  return IRQ_HANDLED;
+}
+
+static struct irqaction s3c2410_timer_irq = {
+	.name		= "LTC185x tick timer",
+	.flags		= IRQF_TIMER,
+	.handler	= TimerINTHandler,
+};
+
+
 static int sbc2440_mzio_ltc1857_ioctl(
 	struct inode *inode, 
 	struct file *file, 
@@ -83,7 +117,21 @@ static int sbc2440_mzio_ltc1857_ioctl(
 	switch(cmd)
 	{
 		case MZIO_LTC1857_INIT:
-			printk("Init the ltc185x module\n");	
+			printk("LTC1857: Init the ltc185x module\n");	
+/*
+			{
+				struct spi_device spi;
+//				struct spi_device *spi = to_spi_device(dev);
+				u8 txbuf[1], rxbuf[1];
+				unsigned long reg;
+				int ret;
+				
+				txbuf[0] = 0xAA;
+				ret = spi_write(&spi, txbuf, len + 1);
+				printk("  ret=%d, txbuf=%d,rxbuf=%d\n", ret, txbuf[0], rxbuf[0]);	
+
+			}
+*/
 			return 0;
 
 		default:
@@ -115,10 +163,10 @@ exit:
 }
 
 
+
 static struct file_operations dev_fops = {
 	.owner	=	THIS_MODULE,
 	.ioctl	=	sbc2440_mzio_ltc1857_ioctl,
-	.read   = sbc2440_mzio_ltc1857_read,
 };
 
 static struct miscdevice misc = {
@@ -130,20 +178,83 @@ static struct miscdevice misc = {
 static int __init dev_init(void)
 {
 	int ret;
-
-	ret = misc_register(&misc);
-
+	
 	printk(DEVICE_NAME"\tversion %d%02d%02d%02d%02d\tinitialized\n", GetCompileYear(),
 	GetCompileMonth(), GetCompileDay(), GetCompileHour(), GetCompileMinute());
 	
-	hello_export();
-	
+//	hello_export();
+
+	{
+	  unsigned TimerControl;
+	  unsigned TimerCfg0;
+	  unsigned TimerCfg1;
+	  unsigned TimerCNTB;
+	  unsigned TimerCMPB;
+	  static struct clk *timerclk;
+		unsigned long pclk;
+
+	  gIntCount = 0;
+	  
+	  TimerCfg0 		=	readl(S3C2410_TCFG0);
+	  TimerCfg1 		=	readl(S3C2410_TCFG1);
+	  TimerControl 	= readl(S3C2410_TCON);
+		printk("TimerCfg0=0x%x\n", TimerCfg0);
+		printk("TimerCfg1=0x%x\n", TimerCfg1);
+		printk("TimerControl=0x%x\n", TimerControl);
+		
+		timerclk = clk_get(NULL, "timers");
+		pclk = clk_get_rate(timerclk);
+		printk("pclk=0x%lx\n", pclk);
+
+/*
+TimerCfg0=0x204
+TimerCfg1=0x10
+TimerControl=0x500000
+pclk=0x30479e8
+*/
+
+		// Counter and compare registers  
+	  TimerCNTB = readl(S3C2410_TCNTB(2));
+	  TimerCMPB = readl(S3C2410_TCMPB(2));
+	  
+	  TimerCNTB = 0x0008235;
+	  TimerCMPB = 0x0008235;
+	  
+	  writel(TimerCNTB, S3C2410_TCNTB(2));
+	  writel(TimerCMPB, S3C2410_TCMPB(2));
+	  
+	  // Timer control
+	  TimerControl |= S3C2410_TCON_T2RELOAD;
+	  //TimerControl |= S3C2410_TCON_T2MANUALUPD;
+	  //TimerControl &= ~S3C2410_TCON_T2INVERT;
+	  //TimerControl |= S3C2410_TCON_T2START;
+	  
+	  
+	  writel(TimerControl, S3C2410_TCON);
+	  	  
+	  // Start the timer	  
+	  TimerControl |= S3C2410_TCON_T2START;  
+	  writel(TimerControl, S3C2410_TCON); 	  
+
+	  TimerControl = readl(S3C2410_TCON);
+		printk("TimerControl=0x%x\n", TimerControl);
+
+	  gIntCount = 0;
+	}
+	setup_irq(IRQ_TIMER2, &s3c2410_timer_irq);
+
+// 	ret = request_irq(IRQ_TIMER2, TimerINTHandler, IRQF_SHARED, DEVICE_NAME, &LTC185xDev);
+//	if (ret<0) printk("IRQ error=%d\n", ret);
+
+	ret = misc_register(&misc);
+
 	return ret;
 }
 
 static void __exit dev_exit(void)
 {
 	printk(DEVICE_NAME"\tgoodbye!\n");
+	remove_irq(IRQ_TIMER2, &s3c2410_timer_irq);
 	misc_deregister(&misc);
 }
 
