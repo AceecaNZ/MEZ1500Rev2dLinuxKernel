@@ -12,14 +12,14 @@
 #include <linux/string.h>
 #include <linux/pci.h>
 #include <linux/gpio.h>
-#include <asm/uaccess.h>
+#include <asm/uaccess.h>	// copy_to_user
+//#include <asm/unistd.h>  // sleep
 //#include <linux/delay.h>
 //#include <asm/irq.h>
 //#include <linux/mm.h>
 //#include <linux/errno.h>
 //#include <linux/list.h>
 //#include <asm/atomic.h>
-//#include <asm/unistd.h>
 //#include <linux/spi/spi.h>
 
 #include <mach/map.h>
@@ -245,7 +245,7 @@ pclk=0x30479e8
 	  
 	  // Timer control
 	  TimerControl |= S3C2410_TCON_T2RELOAD;
-	  //TimerControl |= S3C2410_TCON_T2MANUALUPD;
+	  TimerControl |= S3C2410_TCON_T2MANUALUPD;
 	  //TimerControl &= ~S3C2410_TCON_T2INVERT;
 	  //TimerControl |= S3C2410_TCON_T2START;
 	  
@@ -253,6 +253,7 @@ pclk=0x30479e8
 	  writel(TimerControl, S3C2410_TCON);
 	  	  
 	  // Start the timer	  
+	  TimerControl &= ~S3C2410_TCON_T2MANUALUPD;
 	  TimerControl |= S3C2410_TCON_T2START;  
 	  writel(TimerControl, S3C2410_TCON); 	  
 
@@ -260,8 +261,21 @@ pclk=0x30479e8
 		printk("TimerControl=0x%x\n", TimerControl);
 
 	  gIntCount = 0;
+
+		gIntCount = 100;
+	  while (gIntCount--)
+	  {
+		  TimerCNTB = readl(S3C2410_TCNTB(2));
+			printk("TimerCNTB=%d\n", TimerCNTB);
+	  	
+//	  	sleep(1);
+	  }
+	  
+
 	}
 	setup_irq(IRQ_TIMER2, &s3c2410_timer_irq);
+	
+
 
 // 	ret = request_irq(IRQ_TIMER2, TimerINTHandler, IRQF_SHARED, DEVICE_NAME, &LTC185xDev);
 //	if (ret<0) printk("IRQ error=%d\n", ret);
