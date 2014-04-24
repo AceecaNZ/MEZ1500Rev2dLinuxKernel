@@ -1,6 +1,12 @@
 #ifndef __ADC1_H__
 #define __ADC1_H__ 1
 
+#define TimerFreq		100000 // Hz
+#define Timer1ms		TimerFreq/1000 
+#define Timer10ms		TimerFreq/100 
+#define Timer100ms	TimerFreq/10 
+#define Timer1000ms	TimerFreq 
+
 #ifndef ON
   #define ON  true
 #endif

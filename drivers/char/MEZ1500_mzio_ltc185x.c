@@ -56,7 +56,11 @@ typedef struct {
 } LTC185x_DEV;
 static LTC185x_DEV LTC185xDev;
 
-int gIntCount = 0;
+unsigned long	gIntCount1ms 		= 0;
+unsigned long	gIntCount10ms 	= 0;
+unsigned long	gIntCount100ms 	= 0;
+unsigned long	gIntCount1000ms	= 0;
+unsigned int 	gGPJDAT;
 
 
 //-----------------------------------------------------------------------------
@@ -93,25 +97,58 @@ static int GetCompileDay   (void){int day   = DAY;         return((char)day);}
 // Timer interrupt handler
 static irqreturn_t TimerINTHandler(int irq,void *TimDev)
 {    
-	unsigned long temp32;
 
-	// Set for LED to toggle
-	temp32 = __raw_readl(S3C2440_GPJDAT);
-	temp32 &= ~(bDAT_CRNT_CN3_EN_N_CAM_DATA2);
-	__raw_writel(temp32, S3C2440_GPJDAT);
-	temp32 |= bDAT_CRNT_CN3_EN_N_CAM_DATA2;
-	__raw_writel(temp32, S3C2440_GPJDAT);
+  gIntCount1ms++;
+  gIntCount10ms++;
+  gIntCount100ms++;
+  gIntCount1000ms++;
 
-  gIntCount++;
-
-  if (gIntCount >= 1000)
+  if (gIntCount1ms >= Timer1ms)
   {
-		printk("Beep=%d\n", gIntCount);	
-		gIntCount = 0;
+//		printk("Beep=%d\n", gIntCount);	
+		gIntCount1ms = 0;
+
+		// Set for LED to toggle
+/*
+		gGPJDAT = __raw_readl(S3C2440_GPJDAT);
+		if (gGPJDAT & bDAT_CRNT_CN3_EN_N_CAM_DATA2)
+		{
+			gGPJDAT	&= ~(bDAT_CRNT_CN3_EN_N_CAM_DATA2);
+		}
+		else
+		{
+			gGPJDAT	|= bDAT_CRNT_CN3_EN_N_CAM_DATA2;		
+		}
+		gGPJDAT	&= ~(bDAT_CRNT_CN3_EN_N_CAM_DATA2);
+		__raw_writel(gGPJDAT, S3C2440_GPJDAT);
+		gGPJDAT	|= bDAT_CRNT_CN3_EN_N_CAM_DATA2;		
+		__raw_writel(gGPJDAT, S3C2440_GPJDAT);
+*/
 	}
 
+
+  if (gIntCount10ms >= Timer10ms)
+  {
+		gIntCount10ms = 0;
+	}  
   
-  
+  if (gIntCount100ms >= Timer100ms)
+  {
+		gIntCount100ms = 0;
+		// Set for LED to toggle
+		gGPJDAT = __raw_readl(S3C2440_GPJDAT);
+		gGPJDAT	&= ~(bDAT_CRNT_CN3_EN_N_CAM_DATA2);
+		__raw_writel(gGPJDAT, S3C2440_GPJDAT);
+		gGPJDAT	|= bDAT_CRNT_CN3_EN_N_CAM_DATA2;		
+		__raw_writel(gGPJDAT, S3C2440_GPJDAT);
+	}  
+
+  if (gIntCount1000ms >= Timer1000ms)
+  {
+		printk("ISR:\n");	
+		gIntCount1000ms = 0;
+	}  
+
   return IRQ_HANDLED;
 }
 
@@ -208,8 +245,6 @@ static int __init dev_init(void)
 	  static struct clk *timerclk;
 		unsigned long pclk;
 		unsigned long	temp32;
-
-	  gIntCount = 0;
 	  
 	  TimerCfg0 		=	readl(S3C2410_TCFG0);
 	  TimerCfg1 		=	readl(S3C2410_TCFG1);
@@ -235,8 +270,8 @@ pclk=0x30479e8
 	  
 	  temp32 = pclk / (((TimerCfg0 & 0x0000FF00) >> 8) + 1) / 2;   // pclk / (prescalar + 1) / div(=2)
 		printk("temp32=%ld\n", temp32);
-	  TimerCNTB = temp32/1000;  // 1ms 
-	  TimerCMPB = temp32/1000;
+	  TimerCNTB = temp32/TimerFreq;
+	  TimerCMPB = temp32/TimerFreq;
 	  
 	  writel(TimerCNTB, S3C2410_TCNTB(2));
 	  writel(TimerCMPB, S3C2410_TCMPB(2));
@@ -257,9 +292,7 @@ pclk=0x30479e8
 
 	  TimerControl = readl(S3C2410_TCON);
 		printk("TimerControl=0x%x\n", TimerControl);
-
-	  gIntCount = 0;
-	  
+  
 	  
 	  // Setup PortJ
 		__raw_writel(bGPCON_CAM_init,S3C2440_GPJCON);
