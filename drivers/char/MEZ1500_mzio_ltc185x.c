@@ -12,12 +12,12 @@
 #include <linux/string.h>
 #include <linux/pci.h>
 #include <linux/gpio.h>
+#include <asm/uaccess.h>
 //#include <linux/delay.h>
 //#include <asm/irq.h>
 //#include <linux/mm.h>
 //#include <linux/errno.h>
 //#include <linux/list.h>
-//#include <asm/uaccess.h>
 //#include <asm/atomic.h>
 //#include <asm/unistd.h>
 //#include <linux/spi/spi.h>
@@ -93,7 +93,11 @@ static int GetCompileDay   (void){int day   = DAY;         return((char)day);}
 static irqreturn_t TimerINTHandler(int irq,void *TimDev)
 {    
   gIntCount++;
-	printk("Beep=%d\n", gIntCount);	
+  if (gIntCount >= 1000)
+  {
+		printk("Beep=%d\n", gIntCount);	
+		gIntCount = 0;
+	}
   
   return IRQ_HANDLED;
 }
@@ -159,6 +163,21 @@ static int sbc2440_mzio_ltc1857_read(struct file *filp, char *buffer, size_t cou
 	}
 exit:
 */
+	{
+		char 			str[20];
+		size_t 		len;
+	  unsigned 	TimerCNTB = readl(S3C2410_TCNTB(2));
+
+		len = sprintf(str, "TimerCNTB=%d\n", TimerCNTB);
+		if (count >= len) {
+			int r = copy_to_user(buffer, str, len);
+			return r ? r : len;
+		} else {
+			return -EINVAL;
+		}			
+	}
+
+	
 	return 0;	
 }
 
@@ -167,6 +186,7 @@ exit:
 static struct file_operations dev_fops = {
 	.owner	=	THIS_MODULE,
 	.ioctl	=	sbc2440_mzio_ltc1857_ioctl,
+	.read 	= sbc2440_mzio_ltc1857_read,
 };
 
 static struct miscdevice misc = {
