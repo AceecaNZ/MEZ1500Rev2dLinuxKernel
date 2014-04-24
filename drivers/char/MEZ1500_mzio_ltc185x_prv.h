@@ -1,5 +1,5 @@
-#ifndef __ADC1_H__
-#define __ADC1_H__ 1
+#ifndef __MEZ1500_MZIO_LTC185x_H__
+#define __MEZ1500_MZIO_LTC185x_H__ 1
 
 #define TimerFreq		100000 // Hz
 #define Timer1ms		TimerFreq/1000 
@@ -147,6 +147,56 @@
                                             bDAT_UNUSED_CAM_CLK_OUT       |\
                                             bDAT_UNUSED_CAM_RST
 
+/************************************************************************
+ * PortE bits
+ ************************************************************************/
+// GPEDAT bit masks
+#define bGPEDAT_MZIO_SPIMISO	    BIT11		// MZIO_SPI_MISO
+#define bGPEDAT_MZIO_SPIMOSI	    BIT12		// MZIO_SPI_MOSI
+#define bGPEDAT_MZIO_SPICLK		    BIT13		// MZIO_SPI_CLK
+
+// GPECON bit field masks
+#define bmaskGPECON_MZIO_SPIMISO	(bGPCON_AllBits << 22) // SPI MISO
+#define bmaskGPECON_MZIO_SPIMOSI	(bGPCON_AllBits << 24) // SPI MOSI
+#define bmaskGPECON_MZIO_SPICLK	  (bGPCON_AllBits << 26) // SPI CLK
+
+// GPECON bit masks
+#define bGPECON_MZIO_SPIMISO				(bGPCON_Dedicated << 22) 	// SPIMISO
+#define bGPECON_MZIO_SPIMISO_OUTPUT	(bGPCON_Output << 22) 	// SPIMISO
+#define bGPECON_MZIO_SPIMOSI	    	(bGPCON_Dedicated << 24) 	// SPIMOSI
+#define bGPECON_MZIO_SPIMOSI_OUTPUT	(bGPCON_Output << 24) 	// SPIMOSI
+#define bGPECON_MZIO_SPICLK		    	(bGPCON_Dedicated << 26) 	// SPICLK
+#define bGPECON_MZIO_SPICLK_OUTPUT	(bGPCON_Output << 26) 	// SPICLK
+
+#define bmaskGPECON_SPI_INIT			bGPECON_MZIO_SPIMISO				|\
+																	bGPECON_MZIO_SPIMOSI 				|\
+																	bGPECON_MZIO_SPICLK
+#define bmaskGPECON_SPI_DEINIT		bGPECON_MZIO_SPIMISO_OUTPUT	|\
+																	bGPECON_MZIO_SPIMOSI_OUTPUT |\
+																	bGPECON_MZIO_SPICLK_OUTPUT
+
+
+// SPCON register
+#define bmaskSPCONx_SMOD			(0x3 << 5)
+#define bSPCONx_SMOD_Polling  (0x0 << 5)
+#define bSPCONx_SMOD_Irq 			(0x1 << 5)
+#define bSPCONx_SMOD_DMA  		(0x2 << 5)
+#define bSPCONx_ENSCK  				(0x1 << 4)
+#define bSPCONx_MSTR					(0x1 << 3)
+#define bSPCONx_CPOL					(0x1 << 2)
+#define bSPCONx_CPHA					(0x1 << 1)
+#define bSPCONx_TAGD					(0x1 << 0)
+
+// SPSTA register
+#define bSPSTAx_DCOL					(0x1 << 2)
+#define bSPSTAx_MULF					(0x1 << 1)
+#define bSPSTAx_REDY					(0x1 << 0)
+
+// SPPIN register
+#define bSPPINx_ENMUL					(0x1 << 2)
+#define bSPPINx_KEEP					(0x1 << 0)
+
+
 #define CNx     0     // 5V_LIM - Master control for CN1, CN2 & CN3 
 #define CN1     1     // 5V_CN1
 #define CN2     2     // 5V_CN2
@@ -163,53 +213,64 @@
 #define ADC_SGL_DIFF                BIT7
 
 // Multiplexer Channel Selection (Single-ended)
-#define ADC_SINGLE_ENDED_INPUT1             ADC_SGL_DIFF
+#define ADC_SINGLE_ENDED_INPUT0             ADC_SGL_DIFF
 
-#define ADC_SINGLE_ENDED_INPUT2             ADC_SGL_DIFF  |\
+#define ADC_SINGLE_ENDED_INPUT1             ADC_SGL_DIFF  |\
                                             ADC_ODD_SIGN
 
+#define ADC_SINGLE_ENDED_INPUT2             ADC_SGL_DIFF  |\
+                                            ADC_SELECT0
+
 #define ADC_SINGLE_ENDED_INPUT3             ADC_SGL_DIFF  |\
+                                            ADC_ODD_SIGN  |\
                                             ADC_SELECT0
 
 #define ADC_SINGLE_ENDED_INPUT4             ADC_SGL_DIFF  |\
-                                            ADC_ODD_SIGN  |\
-                                            ADC_SELECT0
+                                            ADC_SELECT1
 
 #define ADC_SINGLE_ENDED_INPUT5             ADC_SGL_DIFF  |\
+                                            ADC_ODD_SIGN  |\
                                             ADC_SELECT1
 
 #define ADC_SINGLE_ENDED_INPUT6             ADC_SGL_DIFF  |\
-                                            ADC_ODD_SIGN  |\
-                                            ADC_SELECT1
+                                            ADC_SELECT1   |\
+                                            ADC_SELECT0
 
 #define ADC_SINGLE_ENDED_INPUT7             ADC_SGL_DIFF  |\
-                                            ADC_SELECT1   |\
-                                            ADC_SELECT0
-
-#define ADC_SINGLE_ENDED_INPUT8             ADC_SGL_DIFF  |\
                                             ADC_ODD_SIGN  |\
                                             ADC_SELECT1   |\
                                             ADC_SELECT0
 
+#define ADC_SINGLE_ENDED_INPUT01            0
+
+#define ADC_SINGLE_ENDED_INPUT23            ADC_SELECT0
+
+#define ADC_SINGLE_ENDED_INPUT45            ADC_SELECT1   
+                                            
+#define ADC_SINGLE_ENDED_INPUT67	          ADC_SELECT1   |\
+                                            ADC_SELECT0
+
+
+
 // Multiplexer Channel Selection (Differential)
-#define ADC_DIFFERENTIAL_EVEN_INPUT1_2      0
+#define ADC_DIFFERENTIAL_EVEN_INPUT0_1      0
 
-#define ADC_DIFFERENTIAL_EVEN_INPUT3_4      ADC_SELECT0
+#define ADC_DIFFERENTIAL_EVEN_INPUT2_3      ADC_SELECT0
 
-#define ADC_DIFFERENTIAL_EVEN_INPUT5_6      ADC_SELECT1
+#define ADC_DIFFERENTIAL_EVEN_INPUT4_5      ADC_SELECT1
 
-#define ADC_DIFFERENTIAL_EVEN_INPUT7_8      ADC_SELECT1   |\
+#define ADC_DIFFERENTIAL_EVEN_INPUT6_7      ADC_SELECT1   |\
                                             ADC_SELECT0
 
-#define ADC_DIFFERENTIAL_ODD_INPUT1_2       ADC_ODD_SIGN
+#define ADC_DIFFERENTIAL_ODD_INPUT0_1       ADC_ODD_SIGN
 
-#define ADC_DIFFERENTIAL_ODD_INPUT3_4       ADC_ODD_SIGN  |\
+#define ADC_DIFFERENTIAL_ODD_INPUT2_3       ADC_ODD_SIGN  |\
                                             ADC_SELECT0
 
-#define ADC_DIFFERENTIAL_ODD_INPUT5_6       ADC_ODD_SIGN  |\
+#define ADC_DIFFERENTIAL_ODD_INPUT4_5       ADC_ODD_SIGN  |\
                                             ADC_SELECT1
 
-#define ADC_DIFFERENTIAL_ODD_INPUT7_8       ADC_ODD_SIGN  |\
+#define ADC_DIFFERENTIAL_ODD_INPUT6_7       ADC_ODD_SIGN  |\
                                             ADC_SELECT1   |\
                                             ADC_SELECT0
 
@@ -224,5 +285,66 @@
 #define ADC_NAP                             ADC_NAP_
 #define ADC_SLEEP                           ADC_SLEEP_
 
+#define Ch0Select														0x0001
+#define Ch1Select														0x0002
+#define Ch2Select														0x0004
+#define Ch3Select														0x0008
+#define Ch4Select														0x0010
+#define Ch5Select														0x0020
+#define Ch6Select														0x0040
+#define Ch7Select														0x0080
+#define Ch01Select													0x0100
+#define Ch23Select													0x0200
+#define Ch45Select													0x0400
+#define Ch67Select													0x0800
 
-#endif  // __ADC1_H__
+typedef struct {
+  unsigned int 	ChSelect;		// Bit field of selected channels
+  unsigned int 	CurrCh;			// Current channel
+  unsigned char Ch0Ctrl;		// Control byte for CHx
+  unsigned char Ch1Ctrl;		// Control byte for CHx
+  unsigned char Ch2Ctrl;		// Control byte for CHx
+  unsigned char Ch3Ctrl;		// Control byte for CHx
+  unsigned char Ch4Ctrl;		// Control byte for CHx
+  unsigned char Ch5Ctrl;		// Control byte for CHx
+  unsigned char Ch6Ctrl;		// Control byte for CHx
+  unsigned char Ch7Ctrl;		// Control byte for CHx
+  unsigned char Ch01Ctrl;		// Control byte for CHx
+  unsigned char Ch23Ctrl;		// Control byte for CHx
+  unsigned char Ch45Ctrl;		// Control byte for CHx
+  unsigned char Ch67Ctrl;		// Control byte for CHx    
+} LTC185x_DEV;
+
+
+
+//-----------------------------------------------------------------------------
+//
+// Create a compile date and time stamp
+#define COMPILE_HOUR (((__TIME__[0]-'0')*10) + (__TIME__[1]-'0'))
+#define COMPILE_MIN	 (((__TIME__[3]-'0')*10) + (__TIME__[4]-'0'))
+#define COMPILE_SEC	 (((__TIME__[6]-'0')*10) + (__TIME__[7]-'0'))
+
+#define YEAR ((((__DATE__ [7]-'0')*10+(__DATE__ [8]-'0'))*10+ \
+(__DATE__ [9]-'0'))*10+(__DATE__ [10]-'0'))
+
+/* Month: 0 - 11 */
+#define MONTH ( __DATE__ [2] == 'n' ? (__DATE__ [1] == 'a' ? 0 : 5) \
+	            : __DATE__ [2] == 'b' ? 1 \
+              : __DATE__ [2] == 'r' ? (__DATE__ [0] == 'M' ? 2 : 3) \
+              : __DATE__ [2] == 'y' ? 4 \
+              : __DATE__ [2] == 'l' ? 6 \
+              : __DATE__ [2] == 'g' ? 7 \
+              : __DATE__ [2] == 'p' ? 8 \
+              : __DATE__ [2] == 't' ? 9 \
+              : __DATE__ [2] == 'v' ? 10 : 11)
+
+#define DAY ((__DATE__ [4]==' ' ? 0 : __DATE__ [4]-'0')*10+(__DATE__[5]-'0'))
+
+static int GetCompileHour  (void){int hour  = COMPILE_HOUR;return(hour);}
+static int GetCompileMinute(void){int minute= COMPILE_MIN; return(minute);}
+static int GetCompileYear  (void){int year  = YEAR;        return(year);}
+static int GetCompileMonth (void){int month = MONTH;       return(month + 1);}
+static int GetCompileDay   (void){int day   = DAY;         return((char)day);}
+//-----------------------------------------------------------------------------
+
+#endif  // __MEZ1500_MZIO_LTC185x_H__

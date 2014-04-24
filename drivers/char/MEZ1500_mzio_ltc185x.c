@@ -20,7 +20,6 @@
 //#include <linux/errno.h>
 //#include <linux/list.h>
 //#include <asm/atomic.h>
-//#include <linux/spi/spi.h>
 
 #include <mach/map.h>
 #include <mach/regs-clock.h>
@@ -28,12 +27,10 @@
 #include <mach/regs-gpioj.h>
 #include <plat/regs-timer.h>
 #include <plat/regs-adc.h>
+#include <plat/regs-spi.h>
 #include <linux/interrupt.h>
 #include <linux/clk.h>
 #include <linux/irq.h>
-
-
-
 #include "MEZ1500_mzio.h"
 #include "MEZ1500_mzio_ltc185x.h"
 #include "MEZ1500_mzio_ltc185x_prv.h"
@@ -49,49 +46,13 @@
 
 #define DEVICE_NAME "ltc185x"
 
-extern void hello_export(void);
-
-typedef struct {
-  int delay;
-} LTC185x_DEV;
-static LTC185x_DEV LTC185xDev;
+static LTC185x_DEV gLTC185x;
 
 unsigned long	gIntCount1ms 		= 0;
 unsigned long	gIntCount10ms 	= 0;
 unsigned long	gIntCount100ms 	= 0;
 unsigned long	gIntCount1000ms	= 0;
 unsigned int 	gGPJDAT;
-
-
-//-----------------------------------------------------------------------------
-//
-// Create a compile date and time stamp
-#define COMPILE_HOUR (((__TIME__[0]-'0')*10) + (__TIME__[1]-'0'))
-#define COMPILE_MIN	 (((__TIME__[3]-'0')*10) + (__TIME__[4]-'0'))
-#define COMPILE_SEC	 (((__TIME__[6]-'0')*10) + (__TIME__[7]-'0'))
-
-#define YEAR ((((__DATE__ [7]-'0')*10+(__DATE__ [8]-'0'))*10+ \
-(__DATE__ [9]-'0'))*10+(__DATE__ [10]-'0'))
-
-/* Month: 0 - 11 */
-#define MONTH ( __DATE__ [2] == 'n' ? (__DATE__ [1] == 'a' ? 0 : 5) \
-	            : __DATE__ [2] == 'b' ? 1 \
-              : __DATE__ [2] == 'r' ? (__DATE__ [0] == 'M' ? 2 : 3) \
-              : __DATE__ [2] == 'y' ? 4 \
-              : __DATE__ [2] == 'l' ? 6 \
-              : __DATE__ [2] == 'g' ? 7 \
-              : __DATE__ [2] == 'p' ? 8 \
-              : __DATE__ [2] == 't' ? 9 \
-              : __DATE__ [2] == 'v' ? 10 : 11)
-
-#define DAY ((__DATE__ [4]==' ' ? 0 : __DATE__ [4]-'0')*10+(__DATE__[5]-'0'))
-
-static int GetCompileHour  (void){int hour  = COMPILE_HOUR;return(hour);}
-static int GetCompileMinute(void){int minute= COMPILE_MIN; return(minute);}
-static int GetCompileYear  (void){int year  = YEAR;        return(year);}
-static int GetCompileMonth (void){int month = MONTH;       return(month + 1);}
-static int GetCompileDay   (void){int day   = DAY;         return((char)day);}
-//-----------------------------------------------------------------------------
 
 
 // Timer interrupt handler
@@ -159,33 +120,302 @@ static struct irqaction s3c2410_timer_irq = {
 };
 
 
-static int sbc2440_mzio_ltc1857_ioctl(
+static int sbc2440_mzio_LTC185x_ioctl(
 	struct inode *inode, 
 	struct file *file, 
 	unsigned int cmd, 
 	unsigned long arg)
 {	
-	//printk("cmd=%d\n", cmd);	
-	//printk("arg=%ld,%d\n", arg, (unsigned int) arg);	
+	unsigned long temp32;
 
 	switch(cmd)
 	{
-		case MZIO_LTC1857_INIT:
-			printk("LTC1857: Init the ltc185x module\n");	
-/*
-			{
-				struct spi_device spi;
-//				struct spi_device *spi = to_spi_device(dev);
-				u8 txbuf[1], rxbuf[1];
-				unsigned long reg;
-				int ret;
-				
-				txbuf[0] = 0xAA;
-				ret = spi_write(&spi, txbuf, len + 1);
-				printk("  ret=%d, txbuf=%d,rxbuf=%d\n", ret, txbuf[0], rxbuf[0]);	
+		case MZIO_LTC185x_INIT:		
+		  // Setup PortJ
+			writel(bGPCON_CAM_init,S3C2440_GPJCON);
+			writel(bGPDAT_CAM_init,S3C2440_GPJDAT);
+			writel(bGPUP_CAM_init,S3C2440_GPJUP);				
+			printk("LTC185x: Init\n");	
+			
+			// Turn on the MZIO 5V
+			s3c2410_gpio_setpin(S3C2410_GPC(8), 0);
 
+			// Set SPI lines as dedicated function
+			writel(bmaskGPECON_SPI_INIT, S3C2410_GPECON);
+			
+			// Setup SPICON0 register
+			// Polling mode, CLK enabled, Master, pol=pha=0, no garbage mode
+//			temp32 = (bSPCONx_SMOD_Polling|bSPCONx_ENSCK|bSPCONx_MSTR);
+//			writel(temp32, S3C2410_SPCON);
+		
+			// Set prescaler value, 
+			// Note: LTC185x only supports up to 20MHz tops, closest configuration with PCLK=50MHz, is for 12.5MHz.  baud=PCLK/2/(prescaler+1)	 
+//			temp32 = 2;
+//			writel(temp32, S3C2410_SPPRE);
+
+			return 0;
+
+		case MZIO_LTC185x_DEINIT:
+		  // Setup PortJ
+			writel(bGPCON_CAM_init,S3C2440_GPJCON);
+			writel(bGPDAT_CAM_init,S3C2440_GPJDAT);
+			writel(bGPUP_CAM_init, S3C2440_GPJUP);				
+
+			// Turn off the MZIO 5V
+			s3c2410_gpio_setpin(S3C2410_GPC(8), 1);
+			
+			// Set SPI lines as output low
+			writel(bmaskGPECON_SPI_DEINIT, S3C2410_GPECON);
+			temp32 = readl(S3C2410_GPEDAT);
+			temp32 &= ~(bGPEDAT_MZIO_SPIMISO|bGPEDAT_MZIO_SPIMOSI|bGPEDAT_MZIO_SPICLK);
+			writel(temp32,S3C2410_GPEDAT);
+				
+			printk("LTC185x: Deinit\n");	
+			return 0;
+
+		case MZIO_LTC185x_SETUP_CH0SE:
+			if (arg & LTC185x_ChSetup_Enabled) 	gLTC185x.ChSelect |= Ch0Select;
+			else 																gLTC185x.ChSelect &= ~(Ch0Select);
+							
+			gLTC185x.Ch0Ctrl = 	0;				
+			gLTC185x.Ch0Ctrl |=	(arg & 0xFF) | ADC_SINGLE_ENDED_INPUT0;						
+
+			printk("LTC185x: Setup CH0SE ctrl=0x%x\n", gLTC185x.Ch0Ctrl);	
+			return 0;
+
+		case MZIO_LTC185x_SETUP_CH1SE:
+			if (arg & LTC185x_ChSetup_Enabled) 	gLTC185x.ChSelect |= Ch1Select;
+			else 																gLTC185x.ChSelect &= ~(Ch1Select);
+			
+			gLTC185x.Ch1Ctrl = 	0;				
+			gLTC185x.Ch1Ctrl |=	(arg & 0xFF) | ADC_SINGLE_ENDED_INPUT1;						
+
+			printk("LTC185x: Setup CH1SE ctrl=0x%x\n", gLTC185x.Ch1Ctrl);	
+			return 0;
+
+		case MZIO_LTC185x_SETUP_CH2SE:
+			if (arg & LTC185x_ChSetup_Enabled) 	gLTC185x.ChSelect |= Ch2Select;
+			else 																gLTC185x.ChSelect &= ~(Ch2Select);
+			
+			gLTC185x.Ch2Ctrl = 	0;				
+			gLTC185x.Ch2Ctrl |=	(arg & 0xFF) | ADC_SINGLE_ENDED_INPUT2;						
+
+			printk("LTC185x: Setup CH2SE ctrl=0x%x\n", gLTC185x.Ch2Ctrl);	
+			return 0;
+
+		case MZIO_LTC185x_SETUP_CH3SE:
+			if (arg & LTC185x_ChSetup_Enabled) 	gLTC185x.ChSelect |= Ch3Select;
+			else 																gLTC185x.ChSelect &= ~(Ch3Select);
+			
+			gLTC185x.Ch3Ctrl = 	0;				
+			gLTC185x.Ch3Ctrl |=	(arg & 0xFF) | ADC_SINGLE_ENDED_INPUT3;						
+
+			printk("LTC185x: Setup CH3SE ctrl=0x%x\n", gLTC185x.Ch3Ctrl);	
+			return 0;
+
+		case MZIO_LTC185x_SETUP_CH4SE:
+			if (arg & LTC185x_ChSetup_Enabled) 	gLTC185x.ChSelect |= Ch4Select;
+			else 																gLTC185x.ChSelect &= ~(Ch4Select);
+			
+			gLTC185x.Ch4Ctrl = 	0;				
+			gLTC185x.Ch4Ctrl |=	(arg & 0xFF) | ADC_SINGLE_ENDED_INPUT4;						
+
+			printk("LTC185x: Setup CH4SE ctrl=0x%x\n", gLTC185x.Ch4Ctrl);	
+			return 0;
+
+		case MZIO_LTC185x_SETUP_CH5SE:
+			if (arg & LTC185x_ChSetup_Enabled) 	gLTC185x.ChSelect |= Ch5Select;
+			else 																gLTC185x.ChSelect &= ~(Ch5Select);
+			
+			gLTC185x.Ch5Ctrl = 	0;				
+			gLTC185x.Ch5Ctrl |=	(arg & 0xFF) | ADC_SINGLE_ENDED_INPUT5;						
+
+			printk("LTC185x: Setup CH5SE ctrl=0x%x\n", gLTC185x.Ch5Ctrl);	
+			return 0;
+
+		case MZIO_LTC185x_SETUP_CH6SE:
+			if (arg & LTC185x_ChSetup_Enabled) 	gLTC185x.ChSelect |= Ch6Select;
+			else 																gLTC185x.ChSelect &= ~(Ch6Select);
+			
+			gLTC185x.Ch6Ctrl = 	0;				
+			gLTC185x.Ch6Ctrl |=	(arg & 0xFF) | ADC_SINGLE_ENDED_INPUT6;						
+
+			printk("LTC185x: Setup CH6SE ctrl=0x%x\n", gLTC185x.Ch6Ctrl);	
+			return 0;
+
+		case MZIO_LTC185x_SETUP_CH7SE:
+			if (arg & LTC185x_ChSetup_Enabled) 	gLTC185x.ChSelect |= Ch7Select;
+			else 																gLTC185x.ChSelect &= ~(Ch7Select);
+			
+			gLTC185x.Ch7Ctrl = 	0;				
+			gLTC185x.Ch7Ctrl |=	(arg & 0xFF) | ADC_SINGLE_ENDED_INPUT7;						
+
+			printk("LTC185x: Setup CH7SE ctrl=0x%x\n", gLTC185x.Ch7Ctrl);	
+			return 0;
+
+		case MZIO_LTC185x_SETUP_CH01DE:
+			if (arg & LTC185x_ChSetup_Enabled) 	gLTC185x.ChSelect |= Ch01Select;
+			else 																gLTC185x.ChSelect &= ~(Ch01Select);
+			
+			gLTC185x.Ch01Ctrl = 0;
+			gLTC185x.Ch01Ctrl |= (arg & 0xFF) | ADC_SINGLE_ENDED_INPUT01;
+
+			printk("LTC185x: Setup CH01DE ctrl=0x%x\n", gLTC185x.Ch01Ctrl);	
+			return 0;
+
+		case MZIO_LTC185x_SETUP_CH23DE:
+			if (arg & LTC185x_ChSetup_Enabled) 	gLTC185x.ChSelect |= Ch23Select;
+			else 																gLTC185x.ChSelect &= ~(Ch23Select);
+			
+			gLTC185x.Ch23Ctrl = 0;
+			gLTC185x.Ch23Ctrl |= (arg & 0xFF) | ADC_SINGLE_ENDED_INPUT23;
+
+			printk("LTC185x: Setup CH23DE ctrl=0x%x\n", gLTC185x.Ch23Ctrl);	
+			return 0;
+
+		case MZIO_LTC185x_SETUP_CH45DE:
+			if (arg & LTC185x_ChSetup_Enabled) 	gLTC185x.ChSelect |= Ch45Select;
+			else 																gLTC185x.ChSelect &= ~(Ch45Select);
+			
+			gLTC185x.Ch45Ctrl = 0;
+			gLTC185x.Ch45Ctrl |= (arg & 0xFF) | ADC_SINGLE_ENDED_INPUT45;
+
+			printk("LTC185x: Setup CH45DE ctrl=0x%x\n", gLTC185x.Ch45Ctrl);	
+			return 0;
+
+		case MZIO_LTC185x_SETUP_CH67DE:
+			if (arg & LTC185x_ChSetup_Enabled) 	gLTC185x.ChSelect |= Ch67Select;
+			else 																gLTC185x.ChSelect &= ~(Ch67Select);
+			
+			gLTC185x.Ch67Ctrl = 0;
+			gLTC185x.Ch67Ctrl |= (arg & 0xFF) | ADC_SINGLE_ENDED_INPUT67;
+
+			printk("LTC185x: Setup CH67DE ctrl=0x%x\n", gLTC185x.Ch67Ctrl);	
+			return 0;
+
+
+		// 5V power control
+		case MZIO_LTC185x_5VCn1_Enable:
+			if (arg) 
+			{
+				gGPJDAT = readl(S3C2440_GPJDAT);
+				gGPJDAT	&= ~(bDAT_CRNT_CN1_EN_N_CAM_DATA0);
+				writel(gGPJDAT, S3C2440_GPJDAT);		
+				printk("LTC185x: 5V CN1 enabled\n");	
+			} else
+			{
+				gGPJDAT = readl(S3C2440_GPJDAT);
+				gGPJDAT	|= bDAT_CRNT_CN1_EN_N_CAM_DATA0;
+				writel(gGPJDAT, S3C2440_GPJDAT);						
+				printk("LTC185x: 5V CN1 disabled\n");	
+			}			
+			return 0;
+
+		case MZIO_LTC185x_5VCn2_Enable:
+			if (arg) 
+			{
+				gGPJDAT = readl(S3C2440_GPJDAT);
+				gGPJDAT	&= ~(bDAT_CRNT_CN2_EN_N_CAM_DATA1);
+				writel(gGPJDAT, S3C2440_GPJDAT);		
+				printk("LTC185x: 5V CN1 enabled\n");	
+			} else
+			{
+				gGPJDAT = readl(S3C2440_GPJDAT);
+				gGPJDAT	|= bDAT_CRNT_CN2_EN_N_CAM_DATA1;
+				writel(gGPJDAT, S3C2440_GPJDAT);						
+				printk("LTC185x: 5V CN2 disabled\n");	
 			}
-*/
+			return 0;
+
+		case MZIO_LTC185x_5VCn3_Enable:
+			if (arg) 
+			{
+				gGPJDAT = readl(S3C2440_GPJDAT);
+				gGPJDAT	&= ~(bDAT_CRNT_CN3_EN_N_CAM_DATA2);
+				writel(gGPJDAT, S3C2440_GPJDAT);		
+				printk("LTC185x: 5V CN3 enabled\n");	
+			} else
+			{
+				gGPJDAT = readl(S3C2440_GPJDAT);
+				gGPJDAT	|= bDAT_CRNT_CN3_EN_N_CAM_DATA2;
+				writel(gGPJDAT, S3C2440_GPJDAT);						
+				printk("LTC185x: 5V CN3 disabled\n");	
+			}
+			return 0;
+
+	
+		// Start/stop sampling
+		case MZIO_LTC185x_START:
+			{
+			  unsigned TimerControl;
+			  unsigned TimerCfg0;
+			  unsigned TimerCfg1;
+			  unsigned TimerCNTB;
+			  unsigned TimerCMPB;
+			  static struct clk *timerclk;
+				unsigned long pclk;
+				unsigned long	temp32;
+			  
+			  TimerCfg0 		=	readl(S3C2410_TCFG0);
+			  TimerCfg1 		=	readl(S3C2410_TCFG1);
+			  TimerControl 	= readl(S3C2410_TCON);
+				printk("TimerCfg0=0x%x\n", TimerCfg0);
+				printk("TimerCfg1=0x%x\n", TimerCfg1);
+				printk("TimerControl=0x%x\n", TimerControl);
+				
+				timerclk = clk_get(NULL, "timers");
+				pclk = clk_get_rate(timerclk);
+				printk("pclk=0x%lx\n", pclk);
+				
+				// Counter and compare registers  
+			  TimerCNTB = readl(S3C2410_TCNTB(2));
+			  TimerCMPB = readl(S3C2410_TCMPB(2));
+			  
+			  temp32 = pclk / (((TimerCfg0 & 0x0000FF00) >> 8) + 1) / 2;   // pclk / (prescalar + 1) / div(=2)
+				printk("temp32=%ld\n", temp32);
+			  TimerCNTB = temp32/TimerFreq;
+			  TimerCMPB = temp32/TimerFreq;
+			  
+			  writel(TimerCNTB, S3C2410_TCNTB(2));
+			  writel(TimerCMPB, S3C2410_TCMPB(2));
+			  
+			  // Timer control
+			  TimerControl |= S3C2410_TCON_T2RELOAD;
+			  TimerControl |= S3C2410_TCON_T2MANUALUPD;
+			  //TimerControl &= ~S3C2410_TCON_T2INVERT;
+			  //TimerControl |= S3C2410_TCON_T2START;
+			  			  
+			  writel(TimerControl, S3C2410_TCON);
+			  	  
+			  // Start the timer	  
+			  TimerControl &= ~S3C2410_TCON_T2MANUALUPD;
+			  TimerControl |= S3C2410_TCON_T2START;  
+			  writel(TimerControl, S3C2410_TCON); 	  
+		
+			  TimerControl = readl(S3C2410_TCON);
+				printk("TimerControl=0x%x\n", TimerControl);		  
+	
+				// Setup the IRQ
+				setup_irq(IRQ_TIMER2, &s3c2410_timer_irq);		
+			}
+			printk("LTC185x: Start\n");	
+			return 0;
+
+		case MZIO_LTC185x_STOP:
+			{
+				unsigned long TimerControl;
+				
+				remove_irq(IRQ_TIMER2, &s3c2410_timer_irq);
+				
+				// Stop the timer
+			  TimerControl 	= readl(S3C2410_TCON);
+ 			  TimerControl &= ~S3C2410_TCON_T2RELOAD;
+			  TimerControl &= ~S3C2410_TCON_T2MANUALUPD;
+			  TimerControl &= ~S3C2410_TCON_T2INVERT;
+			  TimerControl &= ~S3C2410_TCON_T2START;
+			  writel(TimerControl, S3C2410_TCON);
+			}
+			printk("LTC185x: Stop\n");	
 			return 0;
 
 		default:
@@ -193,8 +423,8 @@ static int sbc2440_mzio_ltc1857_ioctl(
 	}
 }
 
-
-static int sbc2440_mzio_ltc1857_read(struct file *filp, char *buffer, size_t count, loff_t *ppos)
+/*
+static int sbc2440_mzio_LTC185x_read(struct file *filp, char *buffer, size_t count, loff_t *ppos)
 {
 	{
 		char 			str[20];
@@ -212,13 +442,13 @@ static int sbc2440_mzio_ltc1857_read(struct file *filp, char *buffer, size_t cou
 	
 	return 0;	
 }
-
+*/
 
 
 static struct file_operations dev_fops = {
 	.owner	=	THIS_MODULE,
-	.ioctl	=	sbc2440_mzio_ltc1857_ioctl,
-	.read 	= sbc2440_mzio_ltc1857_read,
+	.ioctl	=	sbc2440_mzio_LTC185x_ioctl,
+//	.read 	= sbc2440_mzio_LTC185x_read,
 };
 
 static struct miscdevice misc = {
@@ -233,79 +463,6 @@ static int __init dev_init(void)
 	
 	printk(DEVICE_NAME"\tversion %d%02d%02d%02d%02d\tinitialized\n", GetCompileYear(),
 	GetCompileMonth(), GetCompileDay(), GetCompileHour(), GetCompileMinute());
-	
-//	hello_export();
-
-	{
-	  unsigned TimerControl;
-	  unsigned TimerCfg0;
-	  unsigned TimerCfg1;
-	  unsigned TimerCNTB;
-	  unsigned TimerCMPB;
-	  static struct clk *timerclk;
-		unsigned long pclk;
-		unsigned long	temp32;
-	  
-	  TimerCfg0 		=	readl(S3C2410_TCFG0);
-	  TimerCfg1 		=	readl(S3C2410_TCFG1);
-	  TimerControl 	= readl(S3C2410_TCON);
-		printk("TimerCfg0=0x%x\n", TimerCfg0);
-		printk("TimerCfg1=0x%x\n", TimerCfg1);
-		printk("TimerControl=0x%x\n", TimerControl);
-		
-		timerclk = clk_get(NULL, "timers");
-		pclk = clk_get_rate(timerclk);
-		printk("pclk=0x%lx\n", pclk);
-
-/*
-TimerCfg0=0x204
-TimerCfg1=0x10
-TimerControl=0x500000
-pclk=0x30479e8
-*/
-
-		// Counter and compare registers  
-	  TimerCNTB = readl(S3C2410_TCNTB(2));
-	  TimerCMPB = readl(S3C2410_TCMPB(2));
-	  
-	  temp32 = pclk / (((TimerCfg0 & 0x0000FF00) >> 8) + 1) / 2;   // pclk / (prescalar + 1) / div(=2)
-		printk("temp32=%ld\n", temp32);
-	  TimerCNTB = temp32/TimerFreq;
-	  TimerCMPB = temp32/TimerFreq;
-	  
-	  writel(TimerCNTB, S3C2410_TCNTB(2));
-	  writel(TimerCMPB, S3C2410_TCMPB(2));
-	  
-	  // Timer control
-	  TimerControl |= S3C2410_TCON_T2RELOAD;
-	  TimerControl |= S3C2410_TCON_T2MANUALUPD;
-	  //TimerControl &= ~S3C2410_TCON_T2INVERT;
-	  //TimerControl |= S3C2410_TCON_T2START;
-	  
-	  
-	  writel(TimerControl, S3C2410_TCON);
-	  	  
-	  // Start the timer	  
-	  TimerControl &= ~S3C2410_TCON_T2MANUALUPD;
-	  TimerControl |= S3C2410_TCON_T2START;  
-	  writel(TimerControl, S3C2410_TCON); 	  
-
-	  TimerControl = readl(S3C2410_TCON);
-		printk("TimerControl=0x%x\n", TimerControl);
-  
-	  
-	  // Setup PortJ
-		__raw_writel(bGPCON_CAM_init,S3C2440_GPJCON);
-		__raw_writel(bGPDAT_CAM_init,S3C2440_GPJDAT);
-		__raw_writel(bGPUP_CAM_init,S3C2440_GPJUP);
-		
-		// Set for LED to toggle, init off
-		temp32 = __raw_readl(S3C2440_GPJDAT);
-		temp32 |= bDAT_CRNT_CN3_EN_N_CAM_DATA2;
-		temp32 &= ~(bDAT_CLIM_EN_N_CAM_DATA3);
-		__raw_writel(temp32, S3C2440_GPJDAT);
-	}
-	setup_irq(IRQ_TIMER2, &s3c2410_timer_irq);
 	
 	ret = misc_register(&misc);
 
