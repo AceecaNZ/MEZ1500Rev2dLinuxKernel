@@ -130,32 +130,61 @@ static int sbc2440_mzio_LTC185x_ioctl(
 
 	switch(cmd)
 	{
-		case MZIO_LTC185x_INIT:		
+		// -----------------------------------------------------
+		// Init routines
+		// -----------------------------------------------------		
+		case MZIO_LTC185x_INIT:					
+			printk("LTC185x: Init++\n");	
+		
+			// Turn off the SPI clock
+			temp32 = readl(S3C2410_CLKCON);
+			temp32 &= ~(S3C2410_CLKCON_SPI);
+			writel(temp32,S3C2410_CLKCON);
+
+			// Turn off the MZIO 5V
+			s3c2410_gpio_setpin(S3C2410_GPC(8), 1);
+
+			// Setup GPIO
 		  // Setup PortJ
 			writel(bGPCON_CAM_init,S3C2440_GPJCON);
 			writel(bGPDAT_CAM_init,S3C2440_GPJDAT);
 			writel(bGPUP_CAM_init,S3C2440_GPJUP);				
-			printk("LTC185x: Init\n");	
-			
-			// Turn on the MZIO 5V
-			s3c2410_gpio_setpin(S3C2410_GPC(8), 0);
 
-			// Set SPI lines as dedicated function
+			// Setup SPI lines as dedicated
 			writel(bmaskGPECON_SPI_INIT, S3C2410_GPECON);
-			
+	
+			// SPI clock turn on	
+			temp32 = readl(S3C2410_CLKCON);
+			temp32 |= ~(S3C2410_CLKCON_SPI);
+			writel(temp32,S3C2410_CLKCON);
+
+			// Power up the 5V, to power the CLIM
+			s3c2410_gpio_setpin(S3C2410_GPC(8), 0);
+		
 			// Setup SPICON0 register
 			// Polling mode, CLK enabled, Master, pol=pha=0, no garbage mode
-//			temp32 = (bSPCONx_SMOD_Polling|bSPCONx_ENSCK|bSPCONx_MSTR);
-//			writel(temp32, S3C2410_SPCON);
+			writel(bSPCONx_SMOD_Polling|bSPCONx_ENSCK|bSPCONx_MSTR, S3C2410_SPCON);
 		
 			// Set prescaler value, 
 			// Note: LTC185x only supports up to 20MHz tops, closest configuration with PCLK=50MHz, is for 12.5MHz.  baud=PCLK/2/(prescaler+1)	 
-//			temp32 = 2;
-//			writel(temp32, S3C2410_SPPRE);
-
+			writel(2, S3C2410_SPPRE);
+			printk("LTC185x: Init--\n");	
 			return 0;
 
 		case MZIO_LTC185x_DEINIT:
+			printk("LTC185x: Deinit++\n");	
+
+			// Turn off the SPI clock
+			temp32 = readl(S3C2410_CLKCON);
+			temp32 &= ~(S3C2410_CLKCON_SPI);
+			writel(temp32,S3C2410_CLKCON);
+
+			// Set 5V to enabled once again
+			s3c2410_gpio_setpin(S3C2410_GPC(8), 0);
+
+			// Deinit the SPI registers	
+			writel(0, S3C2410_SPCON);
+
 		  // Setup PortJ
 			writel(bGPCON_CAM_init,S3C2440_GPJCON);
 			writel(bGPDAT_CAM_init,S3C2440_GPJDAT);
@@ -170,9 +199,13 @@ static int sbc2440_mzio_LTC185x_ioctl(
 			temp32 &= ~(bGPEDAT_MZIO_SPIMISO|bGPEDAT_MZIO_SPIMOSI|bGPEDAT_MZIO_SPICLK);
 			writel(temp32,S3C2410_GPEDAT);
 				
-			printk("LTC185x: Deinit\n");	
+			printk("LTC185x: Deinit--\n");	
 			return 0;
 
+
+		// -----------------------------------------------------
+		// ADC Channel setup routines
+		// -----------------------------------------------------
 		case MZIO_LTC185x_SETUP_CH0SE:
 			if (arg & LTC185x_ChSetup_Enabled) 	gLTC185x.ChSelect |= Ch0Select;
 			else 																gLTC185x.ChSelect &= ~(Ch0Select);
@@ -294,18 +327,25 @@ static int sbc2440_mzio_LTC185x_ioctl(
 			return 0;
 
 
+		// -----------------------------------------------------
 		// 5V power control
+		// -----------------------------------------------------
 		case MZIO_LTC185x_5VCn1_Enable:
 			if (arg) 
 			{
 				gGPJDAT = readl(S3C2440_GPJDAT);
-				gGPJDAT	&= ~(bDAT_CRNT_CN1_EN_N_CAM_DATA0);
+				gGPJDAT	&= ~(bDAT_CRNT_CN1_EN_N_CAM_DATA0|bDAT_CLIM_EN_N_CAM_DATA3);
 				writel(gGPJDAT, S3C2440_GPJDAT);		
 				printk("LTC185x: 5V CN1 enabled\n");	
 			} else
 			{
 				gGPJDAT = readl(S3C2440_GPJDAT);
 				gGPJDAT	|= bDAT_CRNT_CN1_EN_N_CAM_DATA0;
+				
+				// Turn off CLIM if all lines are now off
+				if (!(gGPJDAT & bDAT_CRNT_CN2_EN_N_CAM_DATA1) && !(gGPJDAT & bDAT_CRNT_CN3_EN_N_CAM_DATA2) )
+					gGPJDAT	|= bDAT_CLIM_EN_N_CAM_DATA3;
+				
 				writel(gGPJDAT, S3C2440_GPJDAT);						
 				printk("LTC185x: 5V CN1 disabled\n");	
 			}			
@@ -315,13 +355,18 @@ static int sbc2440_mzio_LTC185x_ioctl(
 			if (arg) 
 			{
 				gGPJDAT = readl(S3C2440_GPJDAT);
-				gGPJDAT	&= ~(bDAT_CRNT_CN2_EN_N_CAM_DATA1);
+				gGPJDAT	&= ~(bDAT_CRNT_CN2_EN_N_CAM_DATA1|bDAT_CLIM_EN_N_CAM_DATA3);
 				writel(gGPJDAT, S3C2440_GPJDAT);		
 				printk("LTC185x: 5V CN1 enabled\n");	
 			} else
 			{
 				gGPJDAT = readl(S3C2440_GPJDAT);
 				gGPJDAT	|= bDAT_CRNT_CN2_EN_N_CAM_DATA1;
+
+				// Turn off CLIM if all lines are now off
+				if (!(gGPJDAT & bDAT_CRNT_CN1_EN_N_CAM_DATA0) && !(gGPJDAT & bDAT_CRNT_CN3_EN_N_CAM_DATA2) )
+					gGPJDAT	|= bDAT_CLIM_EN_N_CAM_DATA3;
+
 				writel(gGPJDAT, S3C2440_GPJDAT);						
 				printk("LTC185x: 5V CN2 disabled\n");	
 			}
@@ -331,20 +376,27 @@ static int sbc2440_mzio_LTC185x_ioctl(
 			if (arg) 
 			{
 				gGPJDAT = readl(S3C2440_GPJDAT);
-				gGPJDAT	&= ~(bDAT_CRNT_CN3_EN_N_CAM_DATA2);
+				gGPJDAT	&= ~(bDAT_CRNT_CN3_EN_N_CAM_DATA2|bDAT_CLIM_EN_N_CAM_DATA3);
 				writel(gGPJDAT, S3C2440_GPJDAT);		
 				printk("LTC185x: 5V CN3 enabled\n");	
 			} else
 			{
 				gGPJDAT = readl(S3C2440_GPJDAT);
 				gGPJDAT	|= bDAT_CRNT_CN3_EN_N_CAM_DATA2;
+
+				// Turn off CLIM if all lines are now off
+				if (!(gGPJDAT & bDAT_CRNT_CN1_EN_N_CAM_DATA0) && !(gGPJDAT & bDAT_CRNT_CN2_EN_N_CAM_DATA1) )
+					gGPJDAT	|= bDAT_CLIM_EN_N_CAM_DATA3;
+
 				writel(gGPJDAT, S3C2440_GPJDAT);						
 				printk("LTC185x: 5V CN3 disabled\n");	
 			}
 			return 0;
 
 	
+		// -----------------------------------------------------
 		// Start/stop sampling
+		// -----------------------------------------------------
 		case MZIO_LTC185x_START:
 			{
 			  unsigned TimerControl;
