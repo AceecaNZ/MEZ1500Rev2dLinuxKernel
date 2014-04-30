@@ -285,34 +285,103 @@
 #define ADC_NAP                             ADC_NAP_
 #define ADC_SLEEP                           ADC_SLEEP_
 
-#define Ch0Select														0x0001
-#define Ch1Select														0x0002
-#define Ch2Select														0x0004
-#define Ch3Select														0x0008
-#define Ch4Select														0x0010
-#define Ch5Select														0x0020
-#define Ch6Select														0x0040
-#define Ch7Select														0x0080
-#define Ch01Select													0x0100
-#define Ch23Select													0x0200
-#define Ch45Select													0x0400
-#define Ch67Select													0x0800
+// ADC Channel select
+#define Ch0Select													0                                                                     
+#define Ch1Select											    1
+#define Ch2Select											    2                                                                     
+#define Ch3Select											    3                                                                     
+#define Ch4Select											    4                                                                     
+#define Ch5Select											    5                                                                     
+#define Ch6Select											    6                                                                     
+#define Ch7Select											    7                                                                     
+#define Ch01Select										    8                                                                     
+#define Ch23Select										    9                                                                     
+#define Ch45Select										    10                                                                     
+#define Ch67Select										    11                                                                     
+                                                                     
+
 
 typedef struct {
-  unsigned int 	ChSelect;		// Bit field of selected channels
-  unsigned int 	CurrCh;			// Current channel
-  unsigned char Ch0Ctrl;		// Control byte for CHx
-  unsigned char Ch1Ctrl;		// Control byte for CHx
-  unsigned char Ch2Ctrl;		// Control byte for CHx
-  unsigned char Ch3Ctrl;		// Control byte for CHx
-  unsigned char Ch4Ctrl;		// Control byte for CHx
-  unsigned char Ch5Ctrl;		// Control byte for CHx
-  unsigned char Ch6Ctrl;		// Control byte for CHx
-  unsigned char Ch7Ctrl;		// Control byte for CHx
-  unsigned char Ch01Ctrl;		// Control byte for CHx
-  unsigned char Ch23Ctrl;		// Control byte for CHx
-  unsigned char Ch45Ctrl;		// Control byte for CHx
-  unsigned char Ch67Ctrl;		// Control byte for CHx    
+	unsigned char	enabled;				// 1=enabled, 0=disabled
+  unsigned char control;				// Control byte for CHx
+  unsigned long	count;					// Sampling delay counter
+  unsigned long	thresh;					// Threshhold for setting time between samples
+  unsigned int*	buffer;					// Pointer to the data buffer
+} LTC185x_ChData;
+
+typedef struct {
+  // IRQ handling
+	unsigned char	IsOn;						// 1=IRQ is on, 0=IRQ is off
+	unsigned char InIRQ;					// 1=IRQ active, 0=IRQ not active
+	unsigned char SkipIRQ;				// 1=skip IRQ, 0=normal handling
+	
+	// Channel monitoring
+  unsigned int 	ChSelect;				// Bit field of selected channels
+  unsigned int 	CurrWrCh;				// Current channel for sending control byte to setup 
+  unsigned int 	CurrRdCh;				// Current channel for reading ADC value from
+  
+  // Channel setup
+  LTC185x_ChData ChData[12];		// Array of 11 channels of setup information
+  
+  unsigned char Ch0Ctrl;				// Control byte for CHx
+  unsigned long	Ch0Count;				// Sampling delay counter
+  unsigned long	Ch0Thresh;			// Threshhold for setting time between samples
+  unsigned int*	Ch0Buffer;			// Data buffer
+
+  unsigned char Ch1Ctrl;				// Control byte for CHx
+  unsigned long	Ch1Count;				// Sampling delay counter
+  unsigned long	Ch1Thresh;			// Threshhold for setting time between samples
+  unsigned int*	Ch1Buffer;			// Data buffer
+
+  unsigned char Ch2Ctrl;				// Control byte for CHx
+  unsigned long	Ch2Count;				// Sampling delay counter
+  unsigned long	Ch2Thresh;			// Threshhold for setting time between samples
+  unsigned int*	Ch2Buffer;			// Data buffer
+
+  unsigned char Ch3Ctrl;				// Control byte for CHx
+  unsigned long	Ch3Count;				// Sampling delay counter
+  unsigned long	Ch3Thresh;			// Threshhold for setting time between samples
+  unsigned int*	Ch3Buffer;			// Data buffer
+
+  unsigned char Ch4Ctrl;				// Control byte for CHx
+  unsigned long	Ch4Count;				// Sampling delay counter
+  unsigned long	Ch4Thresh;			// Threshhold for setting time between samples
+  unsigned int*	Ch4Buffer;			// Data buffer
+
+  unsigned char Ch5Ctrl;				// Control byte for CHx
+  unsigned long	Ch5Count;				// Sampling delay counter
+  unsigned long	Ch5Thresh;			// Threshhold for setting time between samples
+  unsigned int*	Ch5Buffer;			// Data buffer
+
+  unsigned char Ch6Ctrl;				// Control byte for CHx
+  unsigned long	Ch6Count;				// Sampling delay counter
+  unsigned long	Ch6Thresh;			// Threshhold for setting time between samples
+  unsigned int*	Ch6Buffer;			// Data buffer
+
+  unsigned char Ch7Ctrl;				// Control byte for CHx
+  unsigned long	Ch7Count;				// Sampling delay counter
+  unsigned long	Ch7Thresh;			// Threshhold for setting time between samples
+  unsigned int*	Ch7Buffer;			// Data buffer
+
+  unsigned char Ch01Ctrl;				// Control byte for CHx
+  unsigned long	Ch01Count;			// Sampling delay counter
+  unsigned long	Ch01Thresh;			// Threshhold for setting time between samples
+  unsigned int*	Ch01Buffer;			// Data buffer
+
+  unsigned char Ch23Ctrl;				// Control byte for CHx
+  unsigned long	Ch23Count;			// Sampling delay counter
+  unsigned long	Ch23Thresh;			// Threshhold for setting time between samples
+  unsigned int*	Ch23Buffer;			// Data buffer
+
+  unsigned char Ch45Ctrl;				// Control byte for CHx
+  unsigned long	Ch45Count;			// Sampling delay counter
+  unsigned long	Ch45Thresh;			// Threshhold for setting time between samples
+  unsigned int*	Ch45Buffer;			// Data buffer
+
+  unsigned char Ch67Ctrl;				// Control byte for CHx    
+  unsigned long	Ch67Count;			// Sampling delay counter
+  unsigned long	Ch67Thresh;			// Threshhold for setting time between samples
+  unsigned int*	Ch67Buffer;			// Data buffer
 } LTC185x_DEV;
 
 
