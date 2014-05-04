@@ -83,7 +83,10 @@ uint8_t PrvSPISendReceiveData(uint8_t data)
 */
 static irqreturn_t TimerINTHandler(int irq,void *TimDev)
 {
-	unsigned char	control;
+	unsigned char	ChSelected;
+	unsigned char	sampleH, sampleL;
+	unsigned int	sampleValue;
+	int						Ch;
 	
 	// Skip the IRQ handling if we need to
 	if (gLTC185x.SkipIRQ) goto exit;
@@ -93,137 +96,81 @@ static irqreturn_t TimerINTHandler(int irq,void *TimDev)
 		printk("Reentrant ISR issue!\n");
 		goto exit;
 	}
-
+	
 	// Mark that we are in the IRQ now
 	gLTC185x.InIRQ = 1;
-  gIntCount1000ms++;
-/*
-	// Channel processing
+	gIntCount1000ms++;
 	
-	// Read the current ADC value and attribute its value to the correct buffer
-	
-	// Get to next write channel 
-	while (gLTC185x.ChSelect && !(gLTC185x.ChSelect & gLTC185x.CurrWrCh))
-	{ 
-		gLTC185x.CurrWrCh << 1;
+	// Update all the counters for enabled channels
+	for (Ch=Ch0; Ch<=Ch67; Ch++) {
+		if (gLTC185x.ChData[Ch].enabled) {
+			if (gLTC185x.ChData[Ch].trig) {
+				if (gLTC185x.ChData[Ch].count) gLTC185x.ChData[Ch].count--;
+				else {	
+					// Add this channel to the sequencer
+					*(gLTC185x.seqP++) = Ch;
 		
-		// Wrap around condition
-		if (gLTC185x.CurrWrCh == ChLastSelect) gLTC185x.CurrWrCh = Ch0Select;
-	}
-	
-	// Set the read channel to the current write channel
-	gLTC185x.CurrRdCh = gLTC185x.CurrWrCh
-	
-	// Write the control byte
-	if 			(gLTC185x.CurrWrCh == Ch0Select) 	control = gLTC185x.Ch0Ctrl;  
-	else if (gLTC185x.CurrWrCh == Ch1Select)  control = gLTC185x.Ch1Ctrl;  
-	else if (gLTC185x.CurrWrCh == Ch2Select)  control = gLTC185x.Ch2Ctrl;  
-	else if (gLTC185x.CurrWrCh == Ch3Select)  control = gLTC185x.Ch3Ctrl;  
-	else if (gLTC185x.CurrWrCh == Ch4Select)  control = gLTC185x.Ch4Ctrl;  
-	else if (gLTC185x.CurrWrCh == Ch5Select)  control = gLTC185x.Ch5Ctrl;  
-	else if (gLTC185x.CurrWrCh == Ch6Select)  control = gLTC185x.Ch6Ctrl;  
-	else if (gLTC185x.CurrWrCh == Ch7Select)  control = gLTC185x.Ch7Ctrl;  
-	else if (gLTC185x.CurrWrCh == Ch01Select) control = gLTC185x.Ch10Ctrl;
-	else if (gLTC185x.CurrWrCh == Ch23Select) control = gLTC185x.Ch23Ctrl;
-	else if (gLTC185x.CurrWrCh == Ch45Select) control = gLTC185x.Ch45Ctrl;
-	else if (gLTC185x.CurrWrCh == Ch67Select) control = gLTC185x.Ch67Ctrl;
-			
-	if (gLTC185x.ChSelect & Ch0Select)
-	{
-		// Channel is selected 
-	  if (gLTC185x.Ch0Thresh)
-	  {
-	  	// The counter threshold is > 0
-	  	if (gLTC185x.Ch0Count++ >= gLTC185x.Ch0Thresh) 
-	  	{
-	  		// The counter threshold has been reached
-				if (gLTC185x.CurrRdCh & Ch0Select)
-				{
-					// We need to read the ADC value
-					gLTC185x.CurrRdCh 
+					// Wrap around the sequencing pointer if necessary
+					if (gLTC185x.seqP > &gLTC185x.Sequence[ChMax]) gLTC185x.seqP = gLTC185x.Sequence;
+		
+					// Reset the counter
+					gLTC185x.ChData[Ch].count = gLTC185x.ChData[Ch].trig;
+		
+					printk("Ch=%d triggered\n", Ch);
+					break;
 				}
-
-	  		// Count has reached the threshold, we sample this channel
-				gLTC185x.Ch0Count = 0;
-
-				gGPJDAT = readl(S3C2440_GPJDAT);
-
-				// Assert RD line
-				gGPJDAT &= ~(bCON_ADC_RD_EN_N_CAM_DATA5);
-				writel(bGPDAT_CAM_init,S3C2440_GPJDAT);
-			
-				// Wakeup from sleep mode	
-//				gGPJDAT &= ~(bCON_ADC_CNV_START_CAM_DATA6);
-//				writel(bGPDAT_CAM_init,S3C2440_GPJDAT);
-
-//				gGPJDAT |= bCON_ADC_CNV_START_CAM_DATA6;
-//				writel(bGPDAT_CAM_init,S3C2440_GPJDAT);
-
-				gGPJDAT &= ~(bCON_ADC_CNV_START_CAM_DATA6);
-				writel(bGPDAT_CAM_init,S3C2440_GPJDAT);
-			
-				// Wait until BUSYn is deasserted
-//				while (BUSY_IS_ASSERTED && timeout--) continue;
-			
-//				ADC_CONVST_LOW;
-				 	
-				// Send the SPI control code 	
-				PrvSPISendReceiveData(gLTC185x.Ch0Ctrl); 		// Send control byte
-				PrvSPISendReceiveData(0xFF);	  						// Sending dummy
-
-				// Need delay?
-
-				gGPJDAT |= bCON_ADC_CNV_START_CAM_DATA6;		// Trigger conversion
-				writel(bGPDAT_CAM_init,S3C2440_GPJDAT);
-
-				while (BUSY_IS_DEASSERTED && timeout--) continue;
-				while (BUSY_IS_ASSERTED && timeout--) continue;
-						
-				// Grab 16-bit word and send ADC to sleep again
-				sampleValueH	= PrvSPISendReceiveData(control);
-				sampleValueL 	= PrvSPISendReceiveData(0xFF);
-				
-				if (ADCgP->chControl & LittleEndian)
-				{
-					// Make sample LittleEndian
-					sampleValue = (sampleValueH << 8) | sampleValueL;
-				}
-				else
-				{
-					// Default is BigEndian
-					sampleValue = (sampleValueL << 8) | sampleValueH;
-				}	
-			
-				ADC_RD_OFF;	
-				
-				ADCgP->sampleCount++;				
 			}
 		}
-		}
 	}
 
-  if (gIntCount10ms >= Timer10ms)
-  {
-		gIntCount10ms = 0;
-	}
+	// ---------------------------------------------
+	// Write new data to ADC for conversion
+	// ---------------------------------------------
+	ChSelected = *gLTC185x.wrP;
+	*gLTC185x.wrP = 0;
+	
+	// Increment and wrap around the write pointer if necessary
+	if (gLTC185x.wrP > &gLTC185x.Sequence[ChMax]) gLTC185x.wrP = gLTC185x.Sequence;
+	else gLTC185x.wrP++;
 
-  if (gIntCount100ms >= Timer100ms)
-  {
-		gIntCount100ms = 0;
-		// Set for LED to toggle
-		gGPJDAT = __raw_readl(S3C2440_GPJDAT);
-		gGPJDAT	&= ~(bDAT_CRNT_CN3_EN_N_CAM_DATA2);
-		__raw_writel(gGPJDAT, S3C2440_GPJDAT);
-		gGPJDAT	|= bDAT_CRNT_CN3_EN_N_CAM_DATA2;
-		__raw_writel(gGPJDAT, S3C2440_GPJDAT);
-	}
 
-  if (gIntCount1000ms >= Timer1000ms)
+	gGPJDAT = readl(S3C2440_GPJDAT);
+
+	// Assert RD line low, set CONVST to low as well
+	gGPJDAT &= ~(bCON_ADC_RD_EN_N_CAM_DATA5|bCON_ADC_CNV_START_CAM_DATA6);
+	writel(bGPDAT_CAM_init,S3C2440_GPJDAT);
+		 	
+	// Send the SPI control code 	
+	// Send control byte
+	sampleH = PrvSPISendReceiveData(gLTC185x.ChData[ChSelected].control); 		
+	// Sending dummy
+	sampleL = PrvSPISendReceiveData(0xFF);	  																
+
+	// CONVST high, trigger conversion, also disable read enable
+	gGPJDAT |= (bCON_ADC_CNV_START_CAM_DATA6|bCON_ADC_RD_EN_N_CAM_DATA5);												
+	writel(bGPDAT_CAM_init,S3C2440_GPJDAT);
+
+
+	// ---------------------------------------------
+	// Process the read data from ADC
+	// ---------------------------------------------
+	ChSelected = *gLTC185x.rdP;
+	*gLTC185x.rdP = 0;
+	
+	// Increment and wrap around the read pointer if necessary
+	if (gLTC185x.rdP > &gLTC185x.Sequence[ChMax]) gLTC185x.rdP = gLTC185x.Sequence;
+	else gLTC185x.rdP++;
+	
+	sampleValue = (sampleL << 8) | sampleH;
+
+	// For now just print out the value to the log	
+	printk("Ch%d=0x%x\n", ChSelected, sampleValue);
+
+  if (gIntCount1000ms >= Timer1000ms*5)
   {
-		printk("ISR:\n");
+		printk("Beep:\n");
 		gIntCount1000ms = 0;
 	}
-*/
 exit:
 	gLTC185x.InIRQ = 0;
   return IRQ_HANDLED;
@@ -284,6 +231,12 @@ static int sbc2440_mzio_LTC185x_ioctl(
 			// Set prescaler value,
 			// Note: LTC185x only supports up to 20MHz tops, closest configuration with PCLK=50MHz, is for 12.5MHz.  baud=PCLK/2/(prescaler+1)
 			writel(2, S3C2410_SPPRE);
+			
+			// Init arrays
+			memset(gLTC185x.Sequence, 0, sizeof(gLTC185x.Sequence));
+			gLTC185x.wrP = gLTC185x.Sequence;
+			gLTC185x.rdP = gLTC185x.Sequence;			
+			gLTC185x.seqP = gLTC185x.Sequence;			
 			printk("LTC185x: Init--\n");
 			return 0;
 
@@ -323,146 +276,146 @@ static int sbc2440_mzio_LTC185x_ioctl(
 		// ADC Channel setup routines
 		// -----------------------------------------------------
 		case MZIO_LTC185x_CH0SE_SETUP:
-			gLTC185x.ChData[Ch0Select].enabled = 	(arg & LTC185x_ChSetup_Enabled);
-			gLTC185x.ChData[Ch0Select].control = 	0;
-			gLTC185x.ChData[Ch0Select].control |=	(arg & 0xFF) | ADC_SINGLE_ENDED_INPUT0;
+			gLTC185x.ChData[Ch0].enabled = 	(arg & LTC185x_ChSetup_Enabled);
+			gLTC185x.ChData[Ch0].control = 	0;
+			gLTC185x.ChData[Ch0].control |=	(arg & 0xFF) | ADC_SINGLE_ENDED_INPUT0;
 			return 0;
 
 		case MZIO_LTC185x_CH0SE_SET_PERIOD:
-			gLTC185x.ChData[Ch0Select].count 	= 	0;
-			gLTC185x.ChData[Ch0Select].thresh = 	arg;
+			gLTC185x.ChData[Ch0].count 	= 	arg;
+			gLTC185x.ChData[Ch0].trig = 	arg;
 			return 0;
 
 		// -----------------------------------------------------
 		case MZIO_LTC185x_CH1SE_SETUP:
-			gLTC185x.ChData[Ch1Select].enabled = 	(arg & LTC185x_ChSetup_Enabled);
-			gLTC185x.ChData[Ch1Select].control = 	0;
-			gLTC185x.ChData[Ch1Select].control |=	(arg & 0xFF) | ADC_SINGLE_ENDED_INPUT1;
+			gLTC185x.ChData[Ch1].enabled = 	(arg & LTC185x_ChSetup_Enabled);
+			gLTC185x.ChData[Ch1].control = 	0;
+			gLTC185x.ChData[Ch1].control |=	(arg & 0xFF) | ADC_SINGLE_ENDED_INPUT1;
 			return 0;
 
 		case MZIO_LTC185x_CH1SE_SET_PERIOD:
-			gLTC185x.ChData[Ch1Select].count 	= 	0;
-			gLTC185x.ChData[Ch1Select].thresh = 	arg;
+			gLTC185x.ChData[Ch1].count 	= 	arg;
+			gLTC185x.ChData[Ch1].trig = 	arg;
 			return 0;
 
 		// -----------------------------------------------------
 		case MZIO_LTC185x_CH2SE_SETUP:
-			gLTC185x.ChData[Ch2Select].enabled = 	(arg & LTC185x_ChSetup_Enabled);
-			gLTC185x.ChData[Ch2Select].control = 	0;
-			gLTC185x.ChData[Ch2Select].control |=	(arg & 0xFF) | ADC_SINGLE_ENDED_INPUT2;
+			gLTC185x.ChData[Ch2].enabled = 	(arg & LTC185x_ChSetup_Enabled);
+			gLTC185x.ChData[Ch2].control = 	0;
+			gLTC185x.ChData[Ch2].control |=	(arg & 0xFF) | ADC_SINGLE_ENDED_INPUT2;
 			return 0;
 
 		case MZIO_LTC185x_CH2SE_SET_PERIOD:
-			gLTC185x.ChData[Ch2Select].count 	= 	0;
-			gLTC185x.ChData[Ch2Select].thresh = 	arg;
+			gLTC185x.ChData[Ch2].count 	= 	arg;
+			gLTC185x.ChData[Ch2].trig = 	arg;
 			return 0;
 
 		// -----------------------------------------------------
 		case MZIO_LTC185x_CH3SE_SETUP:
-			gLTC185x.ChData[Ch3Select].enabled = 	(arg & LTC185x_ChSetup_Enabled);
-			gLTC185x.ChData[Ch3Select].control = 	0;
-			gLTC185x.ChData[Ch3Select].control |=	(arg & 0xFF) | ADC_SINGLE_ENDED_INPUT3;
+			gLTC185x.ChData[Ch3].enabled = 	(arg & LTC185x_ChSetup_Enabled);
+			gLTC185x.ChData[Ch3].control = 	arg;
+			gLTC185x.ChData[Ch3].control |=	(arg & 0xFF) | ADC_SINGLE_ENDED_INPUT3;
 			return 0;
 
 		case MZIO_LTC185x_CH3SE_SET_PERIOD:
-			gLTC185x.ChData[Ch3Select].count 	= 	0;
-			gLTC185x.ChData[Ch3Select].thresh = 	arg;
+			gLTC185x.ChData[Ch3].count 	= 	arg;
+			gLTC185x.ChData[Ch3].trig = 	arg;
 			return 0;
 
 		// -----------------------------------------------------
 		case MZIO_LTC185x_CH4SE_SETUP:
-			gLTC185x.ChData[Ch4Select].enabled = 	(arg & LTC185x_ChSetup_Enabled);
-			gLTC185x.ChData[Ch4Select].control = 	0;
-			gLTC185x.ChData[Ch4Select].control |=	(arg & 0xFF) | ADC_SINGLE_ENDED_INPUT4;
+			gLTC185x.ChData[Ch4].enabled = 	(arg & LTC185x_ChSetup_Enabled);
+			gLTC185x.ChData[Ch4].control = 	arg;
+			gLTC185x.ChData[Ch4].control |=	(arg & 0xFF) | ADC_SINGLE_ENDED_INPUT4;
 			return 0;
 
 		case MZIO_LTC185x_CH4SE_SET_PERIOD:
-			gLTC185x.ChData[Ch4Select].count 	= 	0;
-			gLTC185x.ChData[Ch4Select].thresh = 	arg;
+			gLTC185x.ChData[Ch4].count 	= 	arg;
+			gLTC185x.ChData[Ch4].trig = 	arg;
 			return 0;
 
 		// -----------------------------------------------------
 		case MZIO_LTC185x_CH5SE_SETUP:
-			gLTC185x.ChData[Ch5Select].enabled = 	(arg & LTC185x_ChSetup_Enabled);
-			gLTC185x.ChData[Ch5Select].control = 	0;
-			gLTC185x.ChData[Ch5Select].control |=	(arg & 0xFF) | ADC_SINGLE_ENDED_INPUT5;
+			gLTC185x.ChData[Ch5].enabled = 	(arg & LTC185x_ChSetup_Enabled);
+			gLTC185x.ChData[Ch5].control = 	arg;
+			gLTC185x.ChData[Ch5].control |=	(arg & 0xFF) | ADC_SINGLE_ENDED_INPUT5;
 			return 0;
 
 		case MZIO_LTC185x_CH5SE_SET_PERIOD:
-			gLTC185x.ChData[Ch6Select].count 	= 	0;
-			gLTC185x.ChData[Ch6Select].thresh = 	arg;
+			gLTC185x.ChData[Ch6].count 	= 	arg;
+			gLTC185x.ChData[Ch6].trig = 	arg;
 			return 0;
 
 		// -----------------------------------------------------
 		case MZIO_LTC185x_CH6SE_SETUP:
-			gLTC185x.ChData[Ch6Select].enabled = 	(arg & LTC185x_ChSetup_Enabled);
-			gLTC185x.ChData[Ch6Select].control = 	0;
-			gLTC185x.ChData[Ch6Select].control |=	(arg & 0xFF) | ADC_SINGLE_ENDED_INPUT6;
+			gLTC185x.ChData[Ch6].enabled = 	(arg & LTC185x_ChSetup_Enabled);
+			gLTC185x.ChData[Ch6].control = 	arg;
+			gLTC185x.ChData[Ch6].control |=	(arg & 0xFF) | ADC_SINGLE_ENDED_INPUT6;
 			return 0;
 
 		case MZIO_LTC185x_CH6SE_SET_PERIOD:
-			gLTC185x.ChData[Ch6Select].count 		= 	0;
-			gLTC185x.ChData[Ch6Select].thresh 	= 	arg;
+			gLTC185x.ChData[Ch6].count 		= 	arg;
+			gLTC185x.ChData[Ch6].trig 	= 	arg;
 			return 0;
 
 		// -----------------------------------------------------
 		case MZIO_LTC185x_CH7SE_SETUP:
-			gLTC185x.ChData[Ch7Select].enabled = 	(arg & LTC185x_ChSetup_Enabled);
-			gLTC185x.ChData[Ch7Select].control = 	0;
-			gLTC185x.ChData[Ch7Select].control |=	(arg & 0xFF) | ADC_SINGLE_ENDED_INPUT7;
+			gLTC185x.ChData[Ch7].enabled = 	(arg & LTC185x_ChSetup_Enabled);
+			gLTC185x.ChData[Ch7].control = 	0;
+			gLTC185x.ChData[Ch7].control |=	(arg & 0xFF) | ADC_SINGLE_ENDED_INPUT7;
 			return 0;
 
 		case MZIO_LTC185x_CH7SE_SET_PERIOD:
-			gLTC185x.ChData[Ch7Select].count 		= 	0;
-			gLTC185x.ChData[Ch7Select].thresh 	= 	arg;
+			gLTC185x.ChData[Ch7].count 		= 	arg;
+			gLTC185x.ChData[Ch7].trig 	= 	arg;
 			return 0;
 
 		// -----------------------------------------------------
 		case MZIO_LTC185x_CH01DE_SETUP:
-			gLTC185x.ChData[Ch01Select].enabled = 	(arg & LTC185x_ChSetup_Enabled);
-			gLTC185x.ChData[Ch01Select].control = 	0;
-			gLTC185x.ChData[Ch01Select].control |=	(arg & 0xFF) | ADC_SINGLE_ENDED_INPUT01;
+			gLTC185x.ChData[Ch01].enabled = 	(arg & LTC185x_ChSetup_Enabled);
+			gLTC185x.ChData[Ch01].control = 	arg;
+			gLTC185x.ChData[Ch01].control |=	(arg & 0xFF) | ADC_SINGLE_ENDED_INPUT01;
 			return 0;
 
 		case MZIO_LTC185x_CH01SE_SET_PERIOD:
-			gLTC185x.ChData[Ch01Select].count 	= 	0;
-			gLTC185x.ChData[Ch01Select].thresh 	= 	arg;
+			gLTC185x.ChData[Ch01].count 	= 	arg;
+			gLTC185x.ChData[Ch01].trig 	= 	arg;
 			return 0;
 
 		// -----------------------------------------------------
 		case MZIO_LTC185x_CH23DE_SETUP:
-			gLTC185x.ChData[Ch23Select].enabled = 	(arg & LTC185x_ChSetup_Enabled);
-			gLTC185x.ChData[Ch23Select].control = 	0;
-			gLTC185x.ChData[Ch23Select].control |=	(arg & 0xFF) | ADC_SINGLE_ENDED_INPUT23;
+			gLTC185x.ChData[Ch23].enabled = 	(arg & LTC185x_ChSetup_Enabled);
+			gLTC185x.ChData[Ch23].control = 	arg;
+			gLTC185x.ChData[Ch23].control |=	(arg & 0xFF) | ADC_SINGLE_ENDED_INPUT23;
 			return 0;
 
 		case MZIO_LTC185x_CH23SE_SET_PERIOD:
-			gLTC185x.ChData[Ch23Select].count 	= 	0;
-			gLTC185x.ChData[Ch23Select].thresh 	= 	arg;
+			gLTC185x.ChData[Ch23].count 	= 	arg;
+			gLTC185x.ChData[Ch23].trig 	= 	arg;
 			return 0;
 
 		// -----------------------------------------------------
 		case MZIO_LTC185x_CH45DE_SETUP:
-			gLTC185x.ChData[Ch45Select].enabled = 	(arg & LTC185x_ChSetup_Enabled);
-			gLTC185x.ChData[Ch45Select].control = 	0;
-			gLTC185x.ChData[Ch45Select].control |=	(arg & 0xFF) | ADC_SINGLE_ENDED_INPUT45;
+			gLTC185x.ChData[Ch45].enabled = 	(arg & LTC185x_ChSetup_Enabled);
+			gLTC185x.ChData[Ch45].control = 	arg;
+			gLTC185x.ChData[Ch45].control |=	(arg & 0xFF) | ADC_SINGLE_ENDED_INPUT45;
 			return 0;
 
 		case MZIO_LTC185x_CH45SE_SET_PERIOD:
-			gLTC185x.ChData[Ch45Select].count 	= 	0;
-			gLTC185x.ChData[Ch45Select].thresh 	= 	arg;
+			gLTC185x.ChData[Ch45].count 	= 	arg;
+			gLTC185x.ChData[Ch45].trig 	= 	arg;
 			return 0;
 
 		// -----------------------------------------------------
 		case MZIO_LTC185x_CH67DE_SETUP:
-			gLTC185x.ChData[Ch67Select].enabled = 	(arg & LTC185x_ChSetup_Enabled);
-			gLTC185x.ChData[Ch67Select].control = 	0;
-			gLTC185x.ChData[Ch67Select].control |=	(arg & 0xFF) | ADC_SINGLE_ENDED_INPUT67;
+			gLTC185x.ChData[Ch67].enabled = 	(arg & LTC185x_ChSetup_Enabled);
+			gLTC185x.ChData[Ch67].control = 	arg;
+			gLTC185x.ChData[Ch67].control |=	(arg & 0xFF) | ADC_SINGLE_ENDED_INPUT67;
 			return 0;
 
 		case MZIO_LTC185x_CH67SE_SET_PERIOD:
-			gLTC185x.ChData[Ch67Select].count 	= 	0;
-			gLTC185x.ChData[Ch67Select].thresh 	= 	arg;
+			gLTC185x.ChData[Ch67].count 	= 	arg;
+			gLTC185x.ChData[Ch67].trig 	= 	arg;
 			return 0;
 
 		// -----------------------------------------------------
