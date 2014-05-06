@@ -55,9 +55,9 @@
 
 #define S3C24XX_SZ_IIS		SZ_1M
 #define S3C24XX_SZ_ADC		SZ_1M
-#define S3C24XX_SZ_SPI		SZ_1M
 #define S3C24XX_SZ_SDI		SZ_1M
 #define S3C24XX_SZ_NAND		SZ_1M
+
 
 /* GPIO ports */
 
@@ -69,9 +69,14 @@
  * by the base system.
 */
 
-#define S3C2410_PA_GPIO	   (0x56000000)
-#define S3C24XX_VA_GPIO	   ((S3C24XX_PA_GPIO - S3C24XX_PA_UART) + S3C24XX_VA_UART)
-#define S3C24XX_SZ_GPIO	   SZ_1M
+#define S3C2410_PA_GPIO	  (0x56000000)
+#define S3C24XX_VA_GPIO	  ((S3C24XX_PA_GPIO - S3C24XX_PA_UART) + S3C24XX_VA_UART)
+#define S3C24XX_SZ_GPIO	  SZ_1M
+
+/* SPI */
+#define S3C2410_PA_SPI	  (0x59000000)
+#define S3C24XX_VA_SPI    ((S3C24XX_PA_SPI - S3C24XX_PA_UART) + S3C24XX_VA_UART)
+#define S3C24XX_SZ_SPI		SZ_1M
 
 
 /* ISA style IO, for each machine to sort out mappings for, if it

@@ -326,6 +326,13 @@ typedef struct {
 
 } LTC185x_DEV;
 
+static irqreturn_t TimerINTHandler(int irq,void *TimDev);
+static struct irqaction s3c2410_timer_irq = {
+	.name		= "LTC185x tick timer",
+	.flags		= IRQF_TIMER,
+	.handler	= TimerINTHandler,
+};
+
 
 
 //-----------------------------------------------------------------------------
