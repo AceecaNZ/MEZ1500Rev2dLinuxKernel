@@ -168,10 +168,10 @@ static void PrvStopTimer(void)
 */
 static irqreturn_t TimerINTHandler(int irq,void *TimDev)
 {
-	unsigned char	ChSelected;
 	unsigned char	sampleH, sampleL;
-	unsigned int	sampleValue;
+	unsigned int	sampleValue = 0;
 	int						Ch;
+	int						loopCount;
 	unsigned char	triggered;
 	
 	// Skip the IRQ handling if we need to
@@ -185,110 +185,141 @@ static irqreturn_t TimerINTHandler(int irq,void *TimDev)
 	
 	// Mark that we are in the IRQ now
 	gLTC185x.InIRQ = 1;
-	gIntCount1000ms++;
-	
-	// Update all the counters for enabled channels
-	triggered = 0;
-  if (gIntCount1000ms >= Timer1000ms)
+
+	// Check and update ISR counter
   {
-		printk("Upd::");
-		for (Ch=Ch0; Ch<=ChMax; Ch++) {
-			printk("Ch%d ", Ch);
+		loopCount = ChMax;
+		Ch = gLTC185x.wrCh;
+		
+		triggered = 0;
+		do  
+		{
+			// Increment and wrap around the channel counter
+			Ch++;
+			if (Ch>ChMax) Ch=0;
+				
 			if (gLTC185x.ChData[Ch].enabled) {
 				if (gLTC185x.ChData[Ch].trig) {
-					if (gLTC185x.ChData[Ch].count) {
+					if (gLTC185x.ChData[Ch].count) 
+					{
 						gLTC185x.ChData[Ch].count--;
-						printk("count=%ld\n", gLTC185x.ChData[Ch].count);
 					} else {	
-						// Add this channel to the sequencer
-						*gLTC185x.seqP = Ch;
-
-						// Wrap around the sequencing pointer if necessary
-						gLTC185x.seqP++;
-						if (gLTC185x.seqP > &gLTC185x.Sequence[ChMax]) gLTC185x.seqP = gLTC185x.Sequence;
-			
-						// Reset the counter
-						gLTC185x.ChData[Ch].count = gLTC185x.ChData[Ch].trig;
-			
-						printk("triggered\n");
-						
-						{
-							int j;
-							printk("0x%lx Sequence[] = {", gLTC185x.Sequence);								
-							for (j=0; j<=12; j++)
-							{
-								printk("%d, ", gLTC185x.Sequence[j]);								
-							}
-							printk("}\n ");								
+						if (!triggered)
+						{						
+							// Update the write channel and read channels
+							gLTC185x.rdCh = gLTC185x.wrCh;
+							gLTC185x.wrCh = Ch;
+				
+							// Reset the Channel counter
+							// Note: Trigger happens after it has reached zero, not exactly on zero
+							gLTC185x.ChData[Ch].count = gLTC185x.ChData[Ch].trig - 1; 
+				
+							triggered = 1;
+							gLTC185x.readCnt++;
 						}
-						triggered = 1;
-						break;
 					}
 				}
 			}
-		}
-		printk("\n");
-	}
-	// Exit if we've got nothing more to do.
-	
-	// TODO: NOTE that you have to ensure that the read pointer has caught up to the write pointer
-	if (!triggered) goto exit;
-
-	// ---------------------------------------------
-	// Write new data to ADC for conversion
-	// ---------------------------------------------
-	if 			((gLTC185x.seqP - gLTC185x.Sequence) == 0) 	gLTC185x.wrP = &(gLTC185x.Sequence[ChMax]);
-	else																							 	gLTC185x.wrP = gLTC185x.seqP-1;
-
-	ChSelected = *gLTC185x.wrP;
-	printk("Ch%d wrP=0x%lx\n", ChSelected, gLTC185x.wrP);								
-	
-	// Wrap around the write pointer if necessary
-	gLTC185x.wrP++;
-	if (gLTC185x.wrP > &gLTC185x.Sequence[ChMax]) gLTC185x.wrP = gLTC185x.Sequence;
-
-	gGPJDAT = readl(S3C2440_GPJDAT);
-
-	// Assert RD line low, set CONVST to low as well
-	gGPJDAT &= ~(bCON_ADC_RD_EN_N_CAM_DATA5|bCON_ADC_CNV_START_CAM_DATA6);
-	writel(bGPDAT_CAM_init,S3C2440_GPJDAT);
-		 	
-	// Send the SPI control code 	
-	// Send control byte
-	sampleH = PrvSPISendReceiveData(gLTC185x.ChData[ChSelected].control); 		
-	// Sending dummy
-	sampleL = PrvSPISendReceiveData(0xFF);	  																
-
-	// CONVST high, trigger conversion, also disable read enable
-	gGPJDAT |= (bCON_ADC_CNV_START_CAM_DATA6|bCON_ADC_RD_EN_N_CAM_DATA5);												
-	writel(bGPDAT_CAM_init,S3C2440_GPJDAT);
-
-
-	// ---------------------------------------------
-	// Process the read data from ADC
-	// ---------------------------------------------
-	if 			((gLTC185x.seqP - gLTC185x.Sequence) == 0) 	gLTC185x.rdP = &(gLTC185x.Sequence[ChMax-1]);
-	else if ((gLTC185x.seqP - gLTC185x.Sequence) == 1) 	gLTC185x.rdP = &(gLTC185x.Sequence[ChMax]);
-	else																							 	gLTC185x.rdP = gLTC185x.seqP-2;
+		} while (loopCount--);
 		
-	ChSelected = *(gLTC185x.rdP);
-	printk("Ch%d rdP=0x%lx\n", ChSelected, gLTC185x.rdP);								
+//		for (Ch=0; Ch<ChMax; Ch++)
+//		{
+//			if (gLTC185x.ChData[Ch].enabled) 
+//				printk("Ch%d=%ld ", Ch, gLTC185x.ChData[Ch].count);
+//		}
+//		printk("\n");
+
+		// Exit if we've got nothing more to do.	
+		if (triggered)
+		{
+			// ---------------------------------------------
+			// Write new data to ADC for conversion
+			// ---------------------------------------------
+			printk("Ch%d write\n", gLTC185x.wrCh);								
+				
+			gGPJDAT = readl(S3C2440_GPJDAT);
+		
+			// Assert RD line low, set CONVST to low as well
+			gGPJDAT &= ~(bCON_ADC_RD_EN_N_CAM_DATA5|bCON_ADC_CNV_START_CAM_DATA6);
+			writel(bGPDAT_CAM_init,S3C2440_GPJDAT);
+				 	
+			// Send the SPI control code 	
+			// Send control byte
+			sampleH = PrvSPISendReceiveData(gLTC185x.ChData[gLTC185x.wrCh].control); 		
+			// Sending dummy
+			sampleL = PrvSPISendReceiveData(0xFF);	  																
+		
+			// CONVST high, trigger conversion, also disable read enable
+			gGPJDAT |= (bCON_ADC_CNV_START_CAM_DATA6|bCON_ADC_RD_EN_N_CAM_DATA5);												
+			writel(bGPDAT_CAM_init,S3C2440_GPJDAT);
+		
+		
+			// ---------------------------------------------
+			// Process the read data from ADC
+			// ---------------------------------------------		
+			if (gLTC185x.skipRead == 0)
+			{
+				if (gLTC185x.readCnt > 0)
+				{				
+					// Assemble the sample value if we need to do a read
+					sampleValue = (sampleL << 8) | sampleH;
+					
+					// Decrement the read count
+					gLTC185x.readCnt--;
+		
+					// For now just print out the value to the log	
+					printk("Ch%d read ===> 0x%x\n", gLTC185x.rdCh, sampleValue);
+				}
+			} else
+			{
+				gLTC185x.skipRead = 0;
+			}
+		}
+		// Special case, need to do one extra read even if not triggered to grab the last read out of the ADC
+		else 
+		{
+			if (gLTC185x.readCnt > 0) 
+			{
+				// ---------------------------------------------
+				// Process the read data from ADC
+				// ---------------------------------------------		
+				gGPJDAT = readl(S3C2440_GPJDAT);
+			
+				// Assert RD line low, set CONVST to low as well
+				gGPJDAT &= ~(bCON_ADC_RD_EN_N_CAM_DATA5);
+				writel(bGPDAT_CAM_init,S3C2440_GPJDAT);
+					 	
+				// Send the SPI control code 	
+				// Send control byte
+				sampleH = PrvSPISendReceiveData(0xFF); 		
+				// Sending dummy
+				sampleL = PrvSPISendReceiveData(0xFF);	  																
+			
+				// CONVST high, trigger conversion, also disable read enable
+				gGPJDAT |= (bCON_ADC_RD_EN_N_CAM_DATA5);												
+				writel(bGPDAT_CAM_init,S3C2440_GPJDAT);
+					
+				sampleValue = (sampleL << 8) | sampleH;
+		
+				// Reset the read count
+				gLTC185x.readCnt 	= ReadCntStart;
+				
+				// Ensure that the next read is skipped
+				gLTC185x.skipRead = 1;
+			
+				// For now just print out the value to the log	
+				// Note: If we have reached here, the final read is for the last channel written
+				gLTC185x.rdCh = gLTC185x.wrCh;
+				printk("Ch%d read last ===> 0x%x\n", gLTC185x.rdCh, sampleValue);
+			}
+		}
+	}
 	
-	// Wrap around the read pointer if necessary
-	*gLTC185x.rdP++ = 0;
-	if (gLTC185x.rdP > &gLTC185x.Sequence[ChMax]) gLTC185x.rdP = gLTC185x.Sequence;
-
-	
-	sampleValue = (sampleL << 8) | sampleH;
-
-	// For now just print out the value to the log	
-	printk("   ===> 0x%x\n", sampleValue);
-
 exit:
-  if (gIntCount1000ms >= Timer1000ms)
+  if (gIntCount1000ms-- == 0)
   {
-		printk("Beep:\n");
-		gIntCount1000ms = 0;
+		printk("Beep\n");
+		gIntCount1000ms = Timer1000ms*5;
 	}
 
 	gLTC185x.InIRQ = 0;
@@ -332,25 +363,14 @@ static int sbc2440_mzio_LTC185x_ioctl(
 			// Power up the 5V, to power the CLIM
 			s3c2410_gpio_setpin(MZIO_5V_ENn, 0);
 
-			printk("LTC185x: 1\n");
-
 			// Setup SPICON0 register
 			// Polling mode, CLK enabled, Master, pol=pha=0, no garbage mode
 			SPCON = bSPCONx_SMOD_Polling|bSPCONx_ENSCK|bSPCONx_MSTR;
 
-			printk("LTC185x: 2\n");
-
 			// Set prescaler value,
 			// Note: LTC185x only supports up to 20MHz tops, closest configuration with PCLK=50MHz, is for 12.5MHz.  baud=PCLK/2/(prescaler+1)
-			SPPRE=2;
+			SPPRE=1;
 			
-			printk("LTC185x: 3\n");
-			
-			// Init arrays
-			memset(gLTC185x.Sequence, 0, sizeof(gLTC185x.Sequence));
-			gLTC185x.wrP = gLTC185x.Sequence;
-			gLTC185x.rdP = gLTC185x.Sequence;			
-			gLTC185x.seqP = gLTC185x.Sequence;			
 			printk("LTC185x: Init--\n");
 			return 0;
 
@@ -404,8 +424,8 @@ static int sbc2440_mzio_LTC185x_ioctl(
 			return 0;
 
 		case MZIO_LTC185x_CH0SE_SET_PERIOD:
-			gLTC185x.ChData[Ch0].count 	= 	arg;
-			gLTC185x.ChData[Ch0].trig = 	arg;
+			gLTC185x.ChData[Ch0].trig 	= 	arg / Timer1uSDivideRatio;
+			gLTC185x.ChData[Ch0].count 	= 	gLTC185x.ChData[Ch0].trig;
 			printk("LTC185x: CH0SE_SET_PERIOD .count=%ld .trig=%ld\n", 
 				gLTC185x.ChData[Ch0].count,
 				gLTC185x.ChData[Ch0].trig);
@@ -419,8 +439,8 @@ static int sbc2440_mzio_LTC185x_ioctl(
 			return 0;
 
 		case MZIO_LTC185x_CH1SE_SET_PERIOD:
-			gLTC185x.ChData[Ch1].count 	= 	arg;
-			gLTC185x.ChData[Ch1].trig = 	arg;
+			gLTC185x.ChData[Ch1].trig 	= 	arg / Timer1uSDivideRatio;
+			gLTC185x.ChData[Ch1].count 	= 	gLTC185x.ChData[Ch0].trig;
 			return 0;
 
 		// -----------------------------------------------------
@@ -431,8 +451,8 @@ static int sbc2440_mzio_LTC185x_ioctl(
 			return 0;
 
 		case MZIO_LTC185x_CH2SE_SET_PERIOD:
-			gLTC185x.ChData[Ch2].count 	= 	arg;
-			gLTC185x.ChData[Ch2].trig = 	arg;
+			gLTC185x.ChData[Ch2].trig 	= 	arg / Timer1uSDivideRatio;
+			gLTC185x.ChData[Ch2].count 	= 	gLTC185x.ChData[Ch0].trig;
 			return 0;
 
 		// -----------------------------------------------------
@@ -443,8 +463,8 @@ static int sbc2440_mzio_LTC185x_ioctl(
 			return 0;
 
 		case MZIO_LTC185x_CH3SE_SET_PERIOD:
-			gLTC185x.ChData[Ch3].count 	= 	arg;
-			gLTC185x.ChData[Ch3].trig = 	arg;
+			gLTC185x.ChData[Ch3].trig 	= 	arg / Timer1uSDivideRatio;
+			gLTC185x.ChData[Ch3].count 	= 	gLTC185x.ChData[Ch0].trig;
 			return 0;
 
 		// -----------------------------------------------------
@@ -455,8 +475,8 @@ static int sbc2440_mzio_LTC185x_ioctl(
 			return 0;
 
 		case MZIO_LTC185x_CH4SE_SET_PERIOD:
-			gLTC185x.ChData[Ch4].count 	= 	arg;
-			gLTC185x.ChData[Ch4].trig = 	arg;
+			gLTC185x.ChData[Ch4].trig 	= 	arg / Timer1uSDivideRatio;
+			gLTC185x.ChData[Ch4].count 	= 	gLTC185x.ChData[Ch0].trig;
 			return 0;
 
 		// -----------------------------------------------------
@@ -467,8 +487,8 @@ static int sbc2440_mzio_LTC185x_ioctl(
 			return 0;
 
 		case MZIO_LTC185x_CH5SE_SET_PERIOD:
-			gLTC185x.ChData[Ch6].count 	= 	arg;
-			gLTC185x.ChData[Ch6].trig = 	arg;
+			gLTC185x.ChData[Ch5].trig 	= 	arg / Timer1uSDivideRatio;
+			gLTC185x.ChData[Ch5].count 	= 	gLTC185x.ChData[Ch0].trig;
 			return 0;
 
 		// -----------------------------------------------------
@@ -479,8 +499,8 @@ static int sbc2440_mzio_LTC185x_ioctl(
 			return 0;
 
 		case MZIO_LTC185x_CH6SE_SET_PERIOD:
-			gLTC185x.ChData[Ch6].count 		= 	arg;
-			gLTC185x.ChData[Ch6].trig 	= 	arg;
+			gLTC185x.ChData[Ch6].trig 	= 	arg / Timer1uSDivideRatio;
+			gLTC185x.ChData[Ch6].count 	= 	gLTC185x.ChData[Ch0].trig;
 			return 0;
 
 		// -----------------------------------------------------
@@ -491,8 +511,8 @@ static int sbc2440_mzio_LTC185x_ioctl(
 			return 0;
 
 		case MZIO_LTC185x_CH7SE_SET_PERIOD:
-			gLTC185x.ChData[Ch7].count 		= 	arg;
-			gLTC185x.ChData[Ch7].trig 	= 	arg;
+			gLTC185x.ChData[Ch7].trig 	= 	arg / Timer1uSDivideRatio;
+			gLTC185x.ChData[Ch7].count 	= 	gLTC185x.ChData[Ch0].trig;
 			return 0;
 
 		// -----------------------------------------------------
@@ -503,8 +523,8 @@ static int sbc2440_mzio_LTC185x_ioctl(
 			return 0;
 
 		case MZIO_LTC185x_CH01SE_SET_PERIOD:
-			gLTC185x.ChData[Ch01].count 	= 	arg;
-			gLTC185x.ChData[Ch01].trig 	= 	arg;
+			gLTC185x.ChData[Ch01].trig 	= 	arg / Timer1uSDivideRatio;
+			gLTC185x.ChData[Ch01].count 	= 	gLTC185x.ChData[Ch0].trig;
 			return 0;
 
 		// -----------------------------------------------------
@@ -515,8 +535,8 @@ static int sbc2440_mzio_LTC185x_ioctl(
 			return 0;
 
 		case MZIO_LTC185x_CH23SE_SET_PERIOD:
-			gLTC185x.ChData[Ch23].count 	= 	arg;
-			gLTC185x.ChData[Ch23].trig 	= 	arg;
+			gLTC185x.ChData[Ch23].trig 	= 	arg / Timer1uSDivideRatio;
+			gLTC185x.ChData[Ch23].count 	= 	gLTC185x.ChData[Ch0].trig;
 			return 0;
 
 		// -----------------------------------------------------
@@ -527,8 +547,8 @@ static int sbc2440_mzio_LTC185x_ioctl(
 			return 0;
 
 		case MZIO_LTC185x_CH45SE_SET_PERIOD:
-			gLTC185x.ChData[Ch45].count 	= 	arg;
-			gLTC185x.ChData[Ch45].trig 	= 	arg;
+			gLTC185x.ChData[Ch45].trig 	= 	arg / Timer1uSDivideRatio;
+			gLTC185x.ChData[Ch45].count 	= 	gLTC185x.ChData[Ch0].trig;
 			return 0;
 
 		// -----------------------------------------------------
@@ -539,8 +559,8 @@ static int sbc2440_mzio_LTC185x_ioctl(
 			return 0;
 
 		case MZIO_LTC185x_CH67SE_SET_PERIOD:
-			gLTC185x.ChData[Ch67].count 	= 	arg;
-			gLTC185x.ChData[Ch67].trig 	= 	arg;
+			gLTC185x.ChData[Ch67].trig 	= 	arg / Timer1uSDivideRatio;
+			gLTC185x.ChData[Ch67].count 	= 	gLTC185x.ChData[Ch0].trig;
 			return 0;
 
 		// -----------------------------------------------------
@@ -615,15 +635,15 @@ static int sbc2440_mzio_LTC185x_ioctl(
 		// -----------------------------------------------------
 		case MZIO_LTC185x_START:
 			PrvStartTimer();
-			gLTC185x.seqP=gLTC185x.Sequence;
-			gLTC185x.rdP=gLTC185x.Sequence;
+			gLTC185x.wrCh=ChMax;
+			gLTC185x.readCnt=ReadCntStart;
+			gLTC185x.skipRead=1;
+			gIntCount1000ms = Timer1000ms*5;
 			printk("LTC185x: Start\n");
 			return 0;
 
 		case MZIO_LTC185x_STOP:
 			PrvStopTimer();
-			gLTC185x.seqP=gLTC185x.Sequence;
-			gLTC185x.rdP=gLTC185x.Sequence;
 			printk("LTC185x: Stop\n");
 			return 0;
 

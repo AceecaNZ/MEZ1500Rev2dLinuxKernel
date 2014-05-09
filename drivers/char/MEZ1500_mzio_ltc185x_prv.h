@@ -1,11 +1,9 @@
 #ifndef __MEZ1500_MZIO_LTC185x_H__
 #define __MEZ1500_MZIO_LTC185x_H__ 1
 
-#define TimerFreq		100000 // Hz
-#define Timer1ms		TimerFreq/1000 
-#define Timer10ms		TimerFreq/100 
-#define Timer100ms	TimerFreq/10 
-#define Timer1000ms	TimerFreq 
+#define TimerFreq						100000 // Hz, 10us
+#define Timer1000ms					TimerFreq
+#define Timer1uSDivideRatio	10
 
 #ifndef ON
   #define ON  true
@@ -300,6 +298,8 @@
 #define Ch67										    11                                                                     
 #define ChMax			                  Ch67                                                   
 
+#define ReadCntStart								0		// Used for discarding first sample
+#define ISRCounterReset							1		// Every 10us
 
 typedef struct {
 	unsigned char	enabled;				// 1=enabled, 0=disabled
@@ -315,11 +315,10 @@ typedef struct {
 	unsigned char InIRQ;					// 1=IRQ active, 0=IRQ not active
 	unsigned char SkipIRQ;				// 1=skip IRQ, 0=normal handling
 	
-	unsigned char	Sequence[12];		// Array used for sequencing writes and reads to/from the ADC
-																// This is a circular buffer array
-	unsigned char*	wrP;					// The write pointer (which channel to write ADC command for)
-	unsigned char*	rdP;					// The read pointer (which channel to read ADC data for)
-	unsigned char*	seqP;					// The sequencing pointer, for entering the sequence of reads into the array
+	int							wrCh;					// Which channel to write command for
+	int							rdCh;					// Which channel to read command for
+	int							readCnt;			// Read counter
+	int							skipRead;			// 1=skip the read, 0=do the read
 	
   // Channel setup
   LTC185x_ChData ChData[12];		// Array of 11 channels of setup information 
