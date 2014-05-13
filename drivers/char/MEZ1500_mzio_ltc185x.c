@@ -36,22 +36,27 @@
 #include "MEZ1500_mzio_ltc185x_prv.h"
 
 
-#define SPI_MISO	S3C2410_GPE(11)
-#define SPI_MOSI		S3C2410_GPE(12)
-#define SPI_CLK		S3C2410_GPE(13)
+#define SPI_MISO			S3C2410_GPE(11)
+#define SPI_MOSI			S3C2410_GPE(12)
+#define SPI_CLK				S3C2410_GPE(13)
                                           
 #define MZIO_5V_ENn		S3C2410_GPC(8)
 
 static void __iomem *base_addr_SPI;
-#define SPCON      (*(volatile unsigned long *)(base_addr_SPI + S3C2410_SPCON))	//SPI control
-#define SPPRE      (*(volatile unsigned long *)(base_addr_SPI + S3C2410_SPPRE))	//SPI prescaler
-#define SPSTA      (*(volatile unsigned long *)(base_addr_SPI + S3C2410_SPSTA))	//SPI status
+#define SPCON      (*(volatile unsigned long *)(base_addr_SPI + S3C2410_SPCON	))//SPI control
+#define SPPRE      (*(volatile unsigned long *)(base_addr_SPI + S3C2410_SPPRE	))//SPI prescaler
+#define SPSTA      (*(volatile unsigned long *)(base_addr_SPI + S3C2410_SPSTA	))//SPI status
 #define SPTDAT     (*(volatile unsigned long *)(base_addr_SPI + S3C2410_SPTDAT))//SPI transmit data
 #define SPRDAT     (*(volatile unsigned long *)(base_addr_SPI + S3C2410_SPRDAT))//SPI receive data
 
 static void __iomem *base_addr_CLK;
 //#define CLKCON     (*(volatile unsigned long *)(base_addr_CLK + S3C2410_CLKCON))	//clock control
 #define CLKCON     (*(volatile unsigned long *)(S3C2410_CLKCON))	//clock control
+
+static void __iomem *base_addr_GPIO;
+#define GPJCON 		(*(volatile unsigned long *)(base_addr_GPIO + S3C2440_GPJCON))	//	port J control
+#define GPJDAT 		(*(volatile unsigned long *)(base_addr_GPIO + S3C2440_GPJDAT))	//	port J data
+
 
 #undef DEBUG
 #define DEBUG
@@ -63,10 +68,20 @@ static void __iomem *base_addr_CLK;
 
 #define DEVICE_NAME "ltc185x"
 
+#define EndianSwap16(n)	(((((unsigned int) n) << 8) & 0xFF00) | \
+                         ((((unsigned int) n) >> 8) & 0x00FF))
+
+
+#define EndianSwap32(n)	(((((unsigned long) n) << 24) & 0xFF000000) |	\
+                         ((((unsigned long) n) <<  8) & 0x00FF0000) |	\
+                         ((((unsigned long) n) >>  8) & 0x0000FF00) |	\
+                         ((((unsigned long) n) >> 24) & 0x000000FF))
 
 static LTC185x_DEV gLTC185x;
 unsigned long gIntCount1000ms=0;
-unsigned int 	gGPJDAT;
+unsigned long gGPJDAT;
+unsigned int 	gTimerReloadValue;
+
 
 // ------------------------------------------------------------------
 // Private routines
@@ -109,13 +124,24 @@ static void PrvStartTimer(void)
   TimerCNTB = readl(S3C2410_TCNTB(2));
   TimerCMPB = readl(S3C2410_TCMPB(2));
 
-  temp32 = pclk / (((TimerCfg0 & 0x0000FF00) >> 8) + 1) / 2;   // pclk / (prescalar + 1) / div(=2)
-	printk("temp32=%ld\n", temp32);
+  temp32 = pclk / (((TimerCfg0 & 0x0000FF00) >> 8) + 1) / 2;   // pclk / (prescalar + 1) / divider value (=2)
+  // Note: Prescalar is set by system to be 2
+  // Divider for mux2 is set at 1/2, divider value is 2
+  
+	printk("Freq=%ld\n", temp32);
   TimerCNTB = temp32/TimerFreq;
   TimerCMPB = temp32/TimerFreq;
 
+	printk("TimerCNTB=%d\n", TimerCNTB);
+	printk("TimerCMPB=%d\n", TimerCMPB);
+	
+	gTimerReloadValue = TimerCNTB;
+
   writel(TimerCNTB, S3C2410_TCNTB(2));
   writel(TimerCMPB, S3C2410_TCMPB(2));
+
+	// Setup the IRQ
+	setup_irq(IRQ_TIMER2, &s3c2410_timer_irq);
 
   // Timer control
   TimerControl |= S3C2410_TCON_T2RELOAD;
@@ -126,15 +152,15 @@ static void PrvStartTimer(void)
   writel(TimerControl, S3C2410_TCON);
 
   // Start the timer
-  TimerControl &= ~S3C2410_TCON_T2MANUALUPD;
+//  TimerControl &= ~(S3C2410_TCON_T2RELOAD);
+  TimerControl &= ~(S3C2410_TCON_T2MANUALUPD);
   TimerControl |= S3C2410_TCON_T2START;
   writel(TimerControl, S3C2410_TCON);
+//  writel(gTimerReloadValue, S3C2410_TCNTB(2));
 
   TimerControl = readl(S3C2410_TCON);
 	printk("TimerControl=0x%x\n", TimerControl);
 
-	// Setup the IRQ
-	setup_irq(IRQ_TIMER2, &s3c2410_timer_irq);
 }
 
 static void PrvStopTimer(void)
@@ -173,6 +199,12 @@ static irqreturn_t TimerINTHandler(int irq,void *TimDev)
 	int						Ch;
 	int						loopCount;
 	unsigned char	triggered;
+
+	// Debug toggle
+	gGPJDAT = readl(S3C2440_GPJDAT);
+	gGPJDAT &= ~(bDAT_CLIM_EN_N_CAM_DATA3);
+	writel(gGPJDAT,S3C2440_GPJDAT);
+
 	
 	// Skip the IRQ handling if we need to
 	if (gLTC185x.SkipIRQ) goto exit;
@@ -182,46 +214,44 @@ static irqreturn_t TimerINTHandler(int irq,void *TimDev)
 		printk("Reentrant ISR issue!\n");
 		goto exit;
 	}
-	
+		
 	// Mark that we are in the IRQ now
 	gLTC185x.InIRQ = 1;
 
 	// Check and update ISR counter
-  {
-		loopCount = ChMax;
-		Ch = gLTC185x.wrCh;
-		
-		triggered = 0;
-		do  
-		{
-			// Increment and wrap around the channel counter
-			Ch++;
-			if (Ch>ChMax) Ch=0;
-				
-			if (gLTC185x.ChData[Ch].enabled) {
-				if (gLTC185x.ChData[Ch].trig) {
-					if (gLTC185x.ChData[Ch].count) 
-					{
-						gLTC185x.ChData[Ch].count--;
-					} else {	
-						if (!triggered)
-						{						
-							// Update the write channel and read channels
-							gLTC185x.rdCh = gLTC185x.wrCh;
-							gLTC185x.wrCh = Ch;
-				
-							// Reset the Channel counter
-							// Note: Trigger happens after it has reached zero, not exactly on zero
-							gLTC185x.ChData[Ch].count = gLTC185x.ChData[Ch].trig - 1; 
-				
-							triggered = 1;
-							gLTC185x.readCnt++;
-						}
+	loopCount = ChMax;
+	Ch = gLTC185x.wrCh;	
+	triggered = 0;
+	do  
+	{			
+		// Increment and wrap around the channel counter
+		Ch++;
+		if (Ch>ChMax) Ch=0;
+			
+		if (gLTC185x.ChData[Ch].enabled) {
+			if (gLTC185x.ChData[Ch].trig) {
+				if (gLTC185x.ChData[Ch].count) 
+				{
+					gLTC185x.ChData[Ch].count--;
+				} else {	
+					if (!triggered)
+					{						
+						// Update the write channel and read channels
+						gLTC185x.rdCh = gLTC185x.wrCh;
+						gLTC185x.wrCh = Ch;
+			
+						// Reset the Channel counter
+						// Note: Trigger happens after it has reached zero, not exactly on zero
+						gLTC185x.ChData[Ch].count = gLTC185x.ChData[Ch].trig - 1; 
+			
+						triggered = 1;
+						gLTC185x.readCnt++;
 					}
 				}
 			}
-		} while (loopCount--);
-		
+		}
+	} while (loopCount--);
+	
 //		for (Ch=0; Ch<ChMax; Ch++)
 //		{
 //			if (gLTC185x.ChData[Ch].enabled) 
@@ -229,100 +259,121 @@ static irqreturn_t TimerINTHandler(int irq,void *TimDev)
 //		}
 //		printk("\n");
 
-		// Exit if we've got nothing more to do.	
-		if (triggered)
-		{
-			// ---------------------------------------------
-			// Write new data to ADC for conversion
-			// ---------------------------------------------
-			printk("Ch%d write\n", gLTC185x.wrCh);								
+	// Exit if we've got nothing more to do.	
+	if (triggered)
+	{			
+		// ---------------------------------------------
+		// Write new data to ADC for conversion
+		// ---------------------------------------------
+
+//			printk("Ch%d write\n", gLTC185x.wrCh);								
+			
+		// Assert RD line low, set CONVST to low as well
+		gGPJDAT = readl(S3C2440_GPJDAT);
+		gGPJDAT &= ~(bDAT_ADC_CNV_START_CAM_DATA6|bDAT_ADC_RD_EN_N_CAM_DATA5);
+		writel(gGPJDAT,S3C2440_GPJDAT);
+			 	
+		// Send the SPI control code 	
+		// Send control byte
+//		sampleH = PrvSPISendReceiveData(gLTC185x.ChData[gLTC185x.wrCh].control); 		
+		// Sending dummy
+//		sampleL = PrvSPISendReceiveData(0xFF);	  																
+		// Send a byte
+		SPTDAT = gLTC185x.ChData[gLTC185x.wrCh].control;
+		// Wait until full 8 bits are sent
+		while (!(SPSTA & S3C2410_SPSTA_READY)) continue;
+		sampleH = SPRDAT;
 				
-			gGPJDAT = readl(S3C2440_GPJDAT);
-		
-			// Assert RD line low, set CONVST to low as well
-			gGPJDAT &= ~(bCON_ADC_RD_EN_N_CAM_DATA5|bCON_ADC_CNV_START_CAM_DATA6);
-			writel(bGPDAT_CAM_init,S3C2440_GPJDAT);
-				 	
-			// Send the SPI control code 	
-			// Send control byte
-			sampleH = PrvSPISendReceiveData(gLTC185x.ChData[gLTC185x.wrCh].control); 		
-			// Sending dummy
-			sampleL = PrvSPISendReceiveData(0xFF);	  																
-		
-			// CONVST high, trigger conversion, also disable read enable
-			gGPJDAT |= (bCON_ADC_CNV_START_CAM_DATA6|bCON_ADC_RD_EN_N_CAM_DATA5);												
-			writel(bGPDAT_CAM_init,S3C2440_GPJDAT);
-		
-		
+		SPTDAT = 0xFF;
+		while (!(SPSTA & S3C2410_SPSTA_READY)) continue;
+		sampleL = SPRDAT;
+	
+		// CONVST high, trigger conversion, also disable read enable
+		gGPJDAT |= (bDAT_ADC_CNV_START_CAM_DATA6|bDAT_ADC_RD_EN_N_CAM_DATA5);												
+		writel(gGPJDAT,S3C2440_GPJDAT);	
+	
+		// ---------------------------------------------
+		// Process the read data from ADC
+		// ---------------------------------------------		
+		if (gLTC185x.skipRead == 0)
+		{
+			if (gLTC185x.readCnt > 0)
+			{				
+				// Assemble the sample value if we need to do a read
+				sampleValue = (sampleL << 8) | sampleH;
+				
+				// Decrement the read count
+				gLTC185x.readCnt--;
+	
+				// For now just print out the value to the log	
+//				printk("Ch%d read ===> 0x%x\n", gLTC185x.rdCh, sampleValue);
+			}
+		} else
+		{
+			gLTC185x.skipRead = 0;
+		}
+	}
+	// Special case, need to do one extra read even if not triggered to grab the last read out of the ADC
+	else 
+	{
+		if (gLTC185x.readCnt > 0) 
+		{
 			// ---------------------------------------------
 			// Process the read data from ADC
 			// ---------------------------------------------		
-			if (gLTC185x.skipRead == 0)
-			{
-				if (gLTC185x.readCnt > 0)
-				{				
-					// Assemble the sample value if we need to do a read
-					sampleValue = (sampleL << 8) | sampleH;
-					
-					// Decrement the read count
-					gLTC185x.readCnt--;
 		
-					// For now just print out the value to the log	
-					printk("Ch%d read ===> 0x%x\n", gLTC185x.rdCh, sampleValue);
-				}
-			} else
-			{
-				gLTC185x.skipRead = 0;
-			}
-		}
-		// Special case, need to do one extra read even if not triggered to grab the last read out of the ADC
-		else 
-		{
-			if (gLTC185x.readCnt > 0) 
-			{
-				// ---------------------------------------------
-				// Process the read data from ADC
-				// ---------------------------------------------		
-				gGPJDAT = readl(S3C2440_GPJDAT);
-			
-				// Assert RD line low, set CONVST to low as well
-				gGPJDAT &= ~(bCON_ADC_RD_EN_N_CAM_DATA5);
-				writel(bGPDAT_CAM_init,S3C2440_GPJDAT);
-					 	
-				// Send the SPI control code 	
-				// Send control byte
-				sampleH = PrvSPISendReceiveData(0xFF); 		
-				// Sending dummy
-				sampleL = PrvSPISendReceiveData(0xFF);	  																
-			
-				// CONVST high, trigger conversion, also disable read enable
-				gGPJDAT |= (bCON_ADC_RD_EN_N_CAM_DATA5);												
-				writel(bGPDAT_CAM_init,S3C2440_GPJDAT);
-					
-				sampleValue = (sampleL << 8) | sampleH;
+			// Assert RD line low, set CONVST to low as well
+			gGPJDAT = readl(S3C2440_GPJDAT);
+			gGPJDAT &= ~(bDAT_ADC_RD_EN_N_CAM_DATA5);
+			writel(gGPJDAT,S3C2440_GPJDAT);
+				 	
+			// Send the SPI control code 	
+			// Send control byte
+//			sampleH = PrvSPISendReceiveData(0xFF); 		
+			// Sending dummy
+//			sampleL = PrvSPISendReceiveData(0xFF);	  																
+			SPTDAT = gLTC185x.ChData[gLTC185x.wrCh].control;
+			// Wait until full 8 bits are sent
+			while (!(SPSTA & S3C2410_SPSTA_READY)) continue;
+			sampleH = SPRDAT;
+	
+			SPTDAT = 0xFF;
+			while (!(SPSTA & S3C2410_SPSTA_READY)) continue;
+			sampleL = SPRDAT;
+
 		
-				// Reset the read count
-				gLTC185x.readCnt 	= ReadCntStart;
+			// CONVST high, trigger conversion, also disable read enable
+			gGPJDAT |= (bDAT_ADC_RD_EN_N_CAM_DATA5);												
+			writel(gGPJDAT,S3C2440_GPJDAT);
 				
-				// Ensure that the next read is skipped
-				gLTC185x.skipRead = 1;
+			sampleValue = (sampleL << 8) | sampleH;
+	
+			// Reset the read count
+			gLTC185x.readCnt 	= ReadCntStart;
 			
-				// For now just print out the value to the log	
-				// Note: If we have reached here, the final read is for the last channel written
-				gLTC185x.rdCh = gLTC185x.wrCh;
-				printk("Ch%d read last ===> 0x%x\n", gLTC185x.rdCh, sampleValue);
-			}
+			// Ensure that the next read is skipped
+			gLTC185x.skipRead = 1;
+		
+			// For now just print out the value to the log	
+			// Note: If we have reached here, the final read is for the last channel written
+			gLTC185x.rdCh = gLTC185x.wrCh;
+//			printk("Ch%d read last ===> 0x%x\n", gLTC185x.rdCh, sampleValue);
 		}
 	}
 	
 exit:
   if (gIntCount1000ms-- == 0)
   {
-		printk("Beep\n");
-		gIntCount1000ms = Timer1000ms*5;
+//		printk("Beep\n");
+//		gIntCount1000ms = Timer1000ms*5;
 	}
 
 	gLTC185x.InIRQ = 0;
+
+	// Debug toggle
+	gGPJDAT |= bDAT_CLIM_EN_N_CAM_DATA3;
+	writel(gGPJDAT,S3C2440_GPJDAT);
+
   return IRQ_HANDLED;
 }
 
@@ -701,6 +752,12 @@ static int __init dev_init(void)
 
 	base_addr_CLK = ioremap(S3C2410_PA_CLKPWR,0x20);
 	if (base_addr_CLK == NULL) {
+		printk(KERN_ERR "Failed to remap register block\n");
+		return -ENOMEM;
+	}
+
+	base_addr_GPIO = ioremap(S3C2410_PA_GPIO,0x20);
+	if (base_addr_GPIO == NULL) {
 		printk(KERN_ERR "Failed to remap register block\n");
 		return -ENOMEM;
 	}

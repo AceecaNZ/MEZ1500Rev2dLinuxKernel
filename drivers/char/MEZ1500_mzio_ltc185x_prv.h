@@ -1,9 +1,9 @@
 #ifndef __MEZ1500_MZIO_LTC185x_H__
 #define __MEZ1500_MZIO_LTC185x_H__ 1
 
-#define TimerFreq						100000 // Hz, 10us
+#define TimerFreq						100000*2 // Hz, 10us*2
 #define Timer1000ms					TimerFreq
-#define Timer1uSDivideRatio	10
+#define Timer1uSDivideRatio	10/2
 
 #ifndef ON
   #define ON  true

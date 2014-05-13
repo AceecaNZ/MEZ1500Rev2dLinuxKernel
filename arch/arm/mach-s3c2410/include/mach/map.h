@@ -41,6 +41,9 @@
 /* IIS controller */
 #define S3C2410_PA_IIS	   (0x55000000)
 
+/* GPIO controller */
+#define S3C2410_PA_GPIO	   (0x56000000)
+
 /* RTC */
 #define S3C2410_PA_RTC	   (0x57000000)
 #define S3C24XX_SZ_RTC	   SZ_1M
