@@ -698,6 +698,18 @@ static int sbc2440_mzio_LTC185x_ioctl(
 			printk("LTC185x: Stop\n");
 			return 0;
 
+
+		case MZIO_LTC185x_READ:
+			printk("LTC185x: Read to 0x%lx\n", arg);
+			
+			{
+				int tempBuf = {1,2,3,4,5};
+				
+				// work in progress!
+			}
+			
+			return 5;
+
 		default:
 			return -EINVAL;
 	}
