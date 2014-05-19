@@ -141,7 +141,8 @@ static void PrvStartTimer(void)
   writel(TimerCMPB, S3C2410_TCMPB(2));
 
 	// Setup the IRQ
-	setup_irq(IRQ_TIMER2, &s3c2410_timer_irq);
+	if(setup_irq(IRQ_TIMER2, &s3c2410_timer_irq) == 0)
+		s3c2410_timer_irq.dev_id = &s3c2410_timer_irq;
 
   // Timer control
   TimerControl |= S3C2410_TCON_T2RELOAD;
@@ -167,7 +168,11 @@ static void PrvStopTimer(void)
 {
 	unsigned long TimerControl;
 
-	remove_irq(IRQ_TIMER2, &s3c2410_timer_irq);
+	if(s3c2410_timer_irq.dev_id)
+	{
+		remove_irq(IRQ_TIMER2, &s3c2410_timer_irq);
+		s3c2410_timer_irq.dev_id = 0;
+	}
 
 	// Stop the timer
   TimerControl 	= readl(S3C2410_TCON);
@@ -784,7 +789,13 @@ static int __init dev_init(void)
 static void __exit dev_exit(void)
 {
 	printk(DEVICE_NAME"\tgoodbye!\n");
-	remove_irq(IRQ_TIMER2, &s3c2410_timer_irq);
+
+	if(s3c2410_timer_irq.dev_id)
+	{
+		remove_irq(IRQ_TIMER2, &s3c2410_timer_irq);
+		s3c2410_timer_irq.dev_id = 0;
+	}
+		
 	misc_deregister(&misc);
 }
 
