@@ -710,7 +710,8 @@ static int sbc2440_mzio_LTC185x_ioctl(
 			{
 				int tempBuf = {1,2,3,4,5};
 				
-				// work in progress!
+				
+				
 			}
 			
 			return 5;
