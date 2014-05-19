@@ -790,13 +790,7 @@ static int __init dev_init(void)
 static void __exit dev_exit(void)
 {
 	printk(DEVICE_NAME"\tgoodbye!\n");
-
-	if(s3c2410_timer_irq.dev_id)
-	{
-		remove_irq(IRQ_TIMER2, &s3c2410_timer_irq);
-		s3c2410_timer_irq.dev_id = 0;
-	}
-		
+	remove_irq(IRQ_TIMER2, &s3c2410_timer_irq);
 	misc_deregister(&misc);
 }
 
