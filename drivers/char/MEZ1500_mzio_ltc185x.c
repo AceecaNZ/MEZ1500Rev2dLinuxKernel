@@ -710,8 +710,7 @@ static int sbc2440_mzio_LTC185x_ioctl(
 			{
 				int tempBuf = {1,2,3,4,5};
 				
-				
-				
+				// work in progress!
 			}
 			
 			return 5;
@@ -790,10 +789,15 @@ static int __init dev_init(void)
 static void __exit dev_exit(void)
 {
 	printk(DEVICE_NAME"\tgoodbye!\n");
-	remove_irq(IRQ_TIMER2, &s3c2410_timer_irq);
+
+	if(s3c2410_timer_irq.dev_id)
+	{
+		remove_irq(IRQ_TIMER2, &s3c2410_timer_irq);
+		s3c2410_timer_irq.dev_id = 0;
+	}
+		
 	misc_deregister(&misc);
 }
-
 
 module_init(dev_init);
 module_exit(dev_exit);
