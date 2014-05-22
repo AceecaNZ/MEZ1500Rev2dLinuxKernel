@@ -5,29 +5,30 @@
 #include <linux/types.h>
 #include <linux/moduleparam.h>
 #include <linux/slab.h>
-#include <mach/hardware.h>
 #include <linux/init.h>
 #include <linux/ioctl.h>
 #include <linux/cdev.h>
 #include <linux/string.h>
 #include <linux/pci.h>
 #include <linux/gpio.h>
-#include <asm/uaccess.h>	// copy_to_user
-//#include <asm/unistd.h>
+#include <linux/debugfs.h>	// for mmap stuff
+#include <asm/uaccess.h>		// copy_to_user
 //#include <linux/delay.h>
 //#include <asm/irq.h>
-//#include <linux/mm.h>
 //#include <linux/errno.h>
 //#include <linux/list.h>
 //#include <asm/atomic.h>
-
+#include <linux/mm.h>
+#include <linux/types.h>
 #include <mach/map.h>
+#include <mach/hardware.h>
 #include <mach/regs-clock.h>
 #include <mach/regs-gpio.h>
 #include <mach/regs-gpioj.h>
 #include <plat/regs-timer.h>
 #include <plat/regs-adc.h>
 #include <plat/regs-spi.h>
+#include <linux/wait.h>
 #include <linux/interrupt.h>
 #include <linux/clk.h>
 #include <linux/irq.h>
@@ -81,12 +82,15 @@ static LTC185x_DEV gLTC185x;
 unsigned long gIntCount1000ms=0;
 unsigned long gGPJDAT;
 unsigned int 	gTimerReloadValue;
+struct dentry  *tmpFile;
+
 
 
 // ------------------------------------------------------------------
 // Private routines
 // ------------------------------------------------------------------
 // Function for sending data out via SPI master, returns the contents in the receive register after sending
+/*
 static uint8_t PrvSPISendReceiveData(uint8_t data)
 {
 	// Send a byte
@@ -97,7 +101,7 @@ static uint8_t PrvSPISendReceiveData(uint8_t data)
 
 	return SPRDAT;
 }
-
+*/
 static void PrvStartTimer(void)
 {
   unsigned TimerControl;
@@ -189,6 +193,49 @@ static void PrvStopTimer(void)
 // ------------------------------------------------------------------
 // Driver routines
 // ------------------------------------------------------------------
+// Read handler
+void do_read_tasklet(unsigned long unused)
+{
+	printk("reading::\n");
+
+	// Only doing Ch0 for now
+	if (gLTC185x.rdCh == Ch0)
+	{
+		unsigned int numSamples;
+
+		printk("Ch%d %x to 0x%lx\n", gLTC185x.rdCh, gLTC185x.sampleValue, (unsigned long) gLTC185x.ChData[Ch0].wrP);
+		
+		// Write sample to user space
+		put_user(gLTC185x.sampleValue,	gLTC185x.ChData[Ch0].wrP);
+		
+		// Wrap pointer around if necessary 
+		gLTC185x.ChData[Ch0].wrP++;
+		if (gLTC185x.ChData[Ch0].wrP > gLTC185x.ChData[Ch0].bufferEnd) 
+		{
+				gLTC185x.ChData[Ch0].wrP = gLTC185x.ChData[Ch0].bufferStart;
+				printk("     wrap\n");
+		}
+			
+		// Increment number of samples (note: this might be changed in user space, hence read-modify-write
+		// TODO: potential race condition here!!
+		if (get_user(numSamples, gLTC185x.ChData[Ch0].numSamplesP) == 0);
+		{
+			printk("numSamples=%d 0x%lx\n", numSamples, (unsigned long)gLTC185x.ChData[Ch0].numSamplesP);
+			numSamples++;
+			if (put_user(numSamples, gLTC185x.ChData[Ch0].numSamplesP))
+			{
+				printk("error writing numSamples\n");					
+			}
+
+			if (copy_to_user(gLTC185x.ChData[Ch0].numSamplesP, &numSamples, sizeof(numSamples)))
+			{
+				printk("error copy_to_user\n");											
+			}
+		}
+	}			
+}
+DECLARE_TASKLET(read_tasklet, do_read_tasklet, 0);
+
 // Timer interrupt handler
 /*
 	Note: The tconv conversion time is 5us max, which is half of the time between ISR IRQs.
@@ -204,6 +251,7 @@ static irqreturn_t TimerINTHandler(int irq,void *TimDev)
 	int						Ch;
 	int						loopCount;
 	unsigned char	triggered;
+	unsigned char	takeReading;
 
 	// Debug toggle
 	gGPJDAT = readl(S3C2440_GPJDAT);
@@ -226,6 +274,7 @@ static irqreturn_t TimerINTHandler(int irq,void *TimDev)
 	// Check and update ISR counter
 	loopCount = ChMax;
 	Ch = gLTC185x.wrCh;	
+	takeReading = 0;
 	triggered = 0;
 	do  
 	{			
@@ -310,8 +359,7 @@ static irqreturn_t TimerINTHandler(int irq,void *TimDev)
 				// Decrement the read count
 				gLTC185x.readCnt--;
 	
-				// For now just print out the value to the log	
-//				printk("Ch%d read ===> 0x%x\n", gLTC185x.rdCh, sampleValue);
+				takeReading = 1;
 			}
 		} else
 		{
@@ -362,8 +410,16 @@ static irqreturn_t TimerINTHandler(int irq,void *TimDev)
 			// For now just print out the value to the log	
 			// Note: If we have reached here, the final read is for the last channel written
 			gLTC185x.rdCh = gLTC185x.wrCh;
-//			printk("Ch%d read last ===> 0x%x\n", gLTC185x.rdCh, sampleValue);
+
+			takeReading = 1;			
 		}
+	}
+	
+	if (takeReading)
+	{
+		// Write the sample value to a temporary buffer that will be handled by the tasklet	
+		gLTC185x.sampleValue = sampleValue;
+		tasklet_schedule(&read_tasklet);
 	}
 	
 exit:
@@ -381,6 +437,7 @@ exit:
 
   return IRQ_HANDLED;
 }
+
 
 static int sbc2440_mzio_LTC185x_ioctl(
 	struct inode *inode,
@@ -486,6 +543,45 @@ static int sbc2440_mzio_LTC185x_ioctl(
 				gLTC185x.ChData[Ch0].count,
 				gLTC185x.ChData[Ch0].trig);
 			return 0;
+
+		case MZIO_LTC185x_CH0SE_SET_BUFFER:
+			{
+				ChBufferData ChBufDat;
+				
+				// Get data from user space
+				printk("LTC185x: CH0SE_SET_BUFFER arg 0x%lx\n",  arg);
+				if (copy_from_user(&ChBufDat, (void __user*)arg, sizeof(ChBufferData))) return -EFAULT;
+					
+				gLTC185x.ChData[Ch0].wrP 					= ChBufDat.bufferStart;
+				gLTC185x.ChData[Ch0].bufferStart 	= gLTC185x.ChData[Ch0].wrP;
+				gLTC185x.ChData[Ch0].bufferSize		= ChBufDat.bufferSize;
+				gLTC185x.ChData[Ch0].bufferEnd		= gLTC185x.ChData[Ch0].bufferStart + gLTC185x.ChData[Ch0].bufferSize;
+				gLTC185x.ChData[Ch0].numSamplesP	= ChBufDat.numSamplesP;
+				
+				printk("LTC185x: CH0SE_SET_BUFFER start=0x%lx, size=%ld, numSamP=0x%lx\n", 
+					(unsigned long) gLTC185x.ChData[Ch0].wrP,
+					gLTC185x.ChData[Ch0].bufferSize,
+					(unsigned long) gLTC185x.ChData[Ch0].numSamplesP
+					);
+					
+				// Test
+				if (put_user(55, gLTC185x.ChData[Ch0].numSamplesP))
+				{
+					printk("error put_user\n");					
+				}
+				
+/*
+				{
+					unsigned int temp = 55;
+					if (copy_to_user(gLTC185x.ChData[Ch0].numSamplesP, &temp, sizeof(temp)))
+					{
+						printk("error copy_to_user\n");											
+					}
+				}
+*/
+			}
+			return 0;
+
 
 		// -----------------------------------------------------
 		case MZIO_LTC185x_CH1SE_SETUP:
@@ -690,30 +786,104 @@ static int sbc2440_mzio_LTC185x_ioctl(
 		// Start/stop sampling
 		// -----------------------------------------------------
 		case MZIO_LTC185x_START:
+			printk("LTC185x: Start++\n");
+
 			PrvStartTimer();
 			gLTC185x.wrCh=ChMax;
 			gLTC185x.readCnt=ReadCntStart;
 			gLTC185x.skipRead=1;
 			gIntCount1000ms = Timer1000ms*5;
-			printk("LTC185x: Start\n");
+			
+//			// Create the temp file
+//			gLTC185x.fdCh0 = open(Ch0Filename, O_RDWR | O_CREAT | O_TRUNC, (mode_t)0600);
+//	    if (gLTC185x.fdCh0 == -1) {
+//				printk("LTC185x: Failed to open file\n");
+//				return -EFAULT;
+//	    }
+//			
+//			// Stretch the file size to the size of the (mmapped) array of ints
+//	    if (lseek(gLTC185x.fdCh0, filesize-1, SEEK_SET) == -1) {
+//				close(gLTC185x.fdCh0);
+//				printk("LTC185x: Failed to lseek() strecth the file\n");
+//				return -EFAULT;
+//	    }
+//
+//			/* Something needs to be written at the end of the file to
+//			 * have the file actually have the new size.
+//			 * Just writing an empty string at the current file position will do.
+//			 *
+//			 * Note:
+//			 *  - The current position in the file is at the end of the stretched 
+//			 *    file due to the call to lseek().
+//			 *  - An empty string is actually a single '\0' character, so a zero-byte
+//			 *    will be written at the last byte of the file.
+//			 */
+//			if (write(gLTC185x.fdCh0, "", 1) != 1) {
+//				close(gLTC185x.fdCh0);
+//				printk("LTC185x: Failed to write last byte\n");
+//				return -EFAULT;
+//			}
+//
+//	    /* Now the file is ready to be mmapped.
+//	     */
+//	    gLTC185x.Ch0Map = mmap(0, filesize, PROT_READ | PROT_WRITE, MAP_SHARED, gLTC185x.fdCh0, 0);
+//	    if (gLTC185x.Ch0Map == MAP_FAILED) {
+//				close(gLTC185x.fdCh0);
+//				printk("LTC185x: Failed to map the file\n");
+//				return -EFAULT;
+//	    }
+	    
+			
+			printk("LTC185x: Start--\n");
 			return 0;
 
 		case MZIO_LTC185x_STOP:
+			printk("LTC185x: Stop++\n");
 			PrvStopTimer();
-			printk("LTC185x: Stop\n");
+						
+//	    // Don't forget to free the mmapped memory
+//	    if (munmap(gLTC185x.gLTC185x.Ch0Map, filesize) == -1) {
+//				printk("LTC185x: Failed to unmap the file\n");
+//				return -EFAULT;
+//	    }
+//	    
+//	    // Close the file
+//			close(gLTC185x.fdCh0);
+	    
+			printk("LTC185x: Stop--\n");
 			return 0;
 
 
 		case MZIO_LTC185x_READ:
 			printk("LTC185x: Read to 0x%lx\n", arg);
 			
-			{
-				int tempBuf = {1,2,3,4,5};
-				
-				// work in progress!
-			}
+			// Wait for data to be ready
+//			wait_eventinterruptible(wq, 0);
+
+//			do_read();
 			
-			return 5;
+/*			
+			{
+//				int tempBuf[5] = {1,2,3,4,5};
+				
+//				if (!access_ok(VERIFY_WRITE, (void __user *)arg, 5)) return -EFAULT;
+					
+//				return put_user(SPPRE,	(int *)arg);
+	//			if (copy_to_user((void *)arg, &SPPRE, sizeof(int))) return -EFAULT;
+				
+			}
+*/			
+			return 0;
+
+		case MZIO_LTC185x_SET_READ_FILENAME:
+			// If system is running, return error
+			
+			// Create the file
+			
+			// Create the mmap
+			
+			
+			return 0;
 
 		default:
 			return -EINVAL;
@@ -754,6 +924,116 @@ static struct miscdevice misc = {
 	.fops = &dev_fops,
 };
 
+
+
+
+
+
+
+
+
+//---------------------------------------------------------------------------------------------
+//	mmap routines
+//---------------------------------------------------------------------------------------------
+/* keep track of how many times it is mmapped */
+void mmap_open(struct vm_area_struct *vma)
+{
+	struct mmap_tmpFile_info *info = (struct mmap_tmpFile_info *)vma->vm_private_data;
+	info->reference++;
+
+	printk("LTC185x mmap_open\n");
+}
+
+void mmap_close(struct vm_area_struct *vma)
+{
+	struct mmap_tmpFile_info *info = (struct mmap_tmpFile_info *)vma->vm_private_data;
+	info->reference--;
+
+	printk("LTC185x mmap_close\n");
+}
+
+static int mmap_fault(struct vm_area_struct *vma, struct vm_fault *vmf)
+{
+	struct page *page;
+	struct mmap_tmpFile_info *info;
+
+	printk("LTC185x mmap_fault\n");
+
+	/* the data is in vma->vm_private_data */
+	info = (struct mmap_tmpFile_info *)vma->vm_private_data;
+	if (!info->data) {
+		printk("no data\n");
+		return 0;	
+	}
+
+	/* get the page */
+	page = virt_to_page(info->data);
+	
+	/* increment the reference count of this page */
+	get_page(page);
+	vmf->page = page;					//--changed
+	return 0;
+}
+
+
+struct vm_operations_struct mmap_vm_ops = {
+	.open =     mmap_open,
+	.close =    mmap_close,
+	.fault =    mmap_fault,
+};
+
+
+int my_mmap(struct file *filp, struct vm_area_struct *vma)
+{
+	printk("LTC185x my_mmap\n");
+
+	vma->vm_ops = &mmap_vm_ops;
+	vma->vm_flags |= VM_RESERVED;
+	/* assign the file private data to the vm private data */
+	vma->vm_private_data = filp->private_data;
+	mmap_open(vma);
+	return 0;
+}
+
+int my_close(struct inode *inode, struct file *filp)
+{
+	struct mmap_tmpFile_info *info = filp->private_data;
+	/* obtain new memory */
+	printk("LTC185x my_close\n");
+
+	free_page((unsigned long)info->data);
+    	kfree(info);
+	filp->private_data = NULL;
+	return 0;
+}
+
+
+int my_open(struct inode *inode, struct file *filp)
+{
+	struct mmap_tmpFile_info *info = kmalloc(sizeof(struct mmap_tmpFile_info), GFP_KERNEL);
+	/* obtain new memory */
+    	info->data = (char *)get_zeroed_page(GFP_KERNEL);
+
+	printk("LTC185x my_open\n");
+
+	memcpy(info->data, "hello from kernel this is file: ", 32);
+	memcpy(info->data + 32, filp->f_dentry->d_name.name, strlen(filp->f_dentry->d_name.name));
+	/* assign this info struct to the file */
+	filp->private_data = info;
+	return 0;
+}
+
+static const struct file_operations my_fops = {
+	.open = my_open,
+	.release = my_close,
+	.mmap = my_mmap,
+};
+
+
+
+//---------------------------------------------------------------------------------------------
+//	Init routines
+//---------------------------------------------------------------------------------------------
 static int __init dev_init(void)
 {
 	int ret;
@@ -780,6 +1060,9 @@ static int __init dev_init(void)
 	}
 
 
+	// Create a temporary debugfs file to share data with a user space app
+	tmpFile = debugfs_create_file("LTC185x_tmp", 0644, NULL, NULL, &my_fops);
+	printk("tmpFile 0x%lx\n", (unsigned long) tmpFile);
 
 	ret = misc_register(&misc);
 
@@ -795,6 +1078,9 @@ static void __exit dev_exit(void)
 		remove_irq(IRQ_TIMER2, &s3c2410_timer_irq);
 		s3c2410_timer_irq.dev_id = 0;
 	}
+
+	// Get rid of the debugfs file		
+	debugfs_remove(tmpFile);
 		
 	misc_deregister(&misc);
 }

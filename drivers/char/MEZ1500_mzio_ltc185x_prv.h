@@ -1,5 +1,7 @@
-#ifndef __MEZ1500_MZIO_LTC185x_H__
-#define __MEZ1500_MZIO_LTC185x_H__ 1
+#ifndef __MEZ1500_MZIO_LTC185x_prv_H__
+#define __MEZ1500_MZIO_LTC185x_prv_H__ 1
+
+#include "MEZ1500_mzio_ltc185x.h"
 
 #define TimerFreq						100000*2 // Hz, 10us*2
 #define Timer1000ms					TimerFreq
@@ -301,12 +303,18 @@
 #define ReadCntStart								0		// Used for discarding first sample
 #define ISRCounterReset							1		// Every 10us
 
+
 typedef struct {
 	unsigned char	enabled;				// 1=enabled, 0=disabled
   unsigned char control;				// Control byte for CHx
   unsigned long	count;					// Sampling delay counter
   unsigned long	trig;						// trigger for setting time between samples
-  unsigned int*	buffer;					// Pointer to the data buffer
+  
+  unsigned int	*wrP;						// write pointer to user space buffer
+  unsigned int 	*bufferStart;		// start of the user space buffer
+  unsigned int 	*bufferEnd;			// end of the user space buffer
+  unsigned long bufferSize;			// size of user space buffer (wrP will wrap around)
+	unsigned int	*numSamplesP;		// a pointer to a user space variable of samples written to user space
 } LTC185x_ChData;
 
 typedef struct {
@@ -315,10 +323,15 @@ typedef struct {
 	unsigned char InIRQ;					// 1=IRQ active, 0=IRQ not active
 	unsigned char SkipIRQ;				// 1=skip IRQ, 0=normal handling
 	
-	int							wrCh;					// Which channel to write command for
-	int							rdCh;					// Which channel to read command for
-	int							readCnt;			// Read counter
-	int							skipRead;			// 1=skip the read, 0=do the read
+	int						wrCh;						// Which channel to write command for
+	int						rdCh;						// Which channel to read command for
+	int						readCnt;				// Read counter
+	int						skipRead;				// 1=skip the read, 0=do the read
+	
+	int						sampleValue;		// The sample value just read
+	
+	int						fdCh0;					// File reference for Ch0 tmp file
+	int						*Ch0Map;				// Pointer to mapped file
 	
   // Channel setup
   LTC185x_ChData ChData[12];		// Array of 11 channels of setup information 
@@ -364,4 +377,4 @@ static int GetCompileMonth (void){int month = MONTH;       return(month + 1);}
 static int GetCompileDay   (void){int day   = DAY;         return((char)day);}
 //-----------------------------------------------------------------------------
 
-#endif  // __MEZ1500_MZIO_LTC185x_H__
+#endif  // __MEZ1500_MZIO_LTC185x_prv_H__
