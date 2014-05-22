@@ -156,7 +156,7 @@ void mez1500_resume(void)
 }
 
 
-
+/*
 static void Delay(int cnt)
 {
 	volatile int i;
@@ -164,7 +164,7 @@ static void Delay(int cnt)
 	for(;cnt>0;cnt--)
 	for(i=0;i<150;i++);
 }
-
+*/
 /*
 static unsigned int read_adc_ch(int ch)
 {

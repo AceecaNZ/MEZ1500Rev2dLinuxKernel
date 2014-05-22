@@ -43,6 +43,7 @@
 #include <linux/dm9000.h>
 #include <linux/mmc/host.h>
 #include <linux/apm-emulation.h>
+#include <linux/delay.h>
 
 
 #include <asm/mach/arch.h>
@@ -481,8 +482,36 @@ static void __init MEZ1500_map_io(void)
 	s3c24xx_init_uarts(MEZ1500_uartcfgs, ARRAY_SIZE(MEZ1500_uartcfgs));
 }
 
+static void MEZ1500_power_off(void)
+{
+	printk("MEZ1500_power_off.\n");
+	
+// Make MZIO safe
+	s3c2410_gpio_setpin(S3C2410_GPC(8), 0);	// MZIO_5V
+	s3c2410_gpio_setpin(S3C2410_GPD(1), 0);	// MZIO_MOD_PWR
+	msleep(100);
+	
+// Set PSU_PWRDN (GPB6) as output and high.
+	s3c2410_gpio_cfgpin(S3C2410_GPB(6), S3C2410_GPIO_OUTPUT);	
+	s3c2410_gpio_setpin(S3C2410_GPB(6), 1);
+	msleep(100);
+
+// Set KP_POWERKEY (GPF0) as output
+	s3c2410_gpio_cfgpin(S3C2410_GPF(0), S3C2410_GPIO_OUTPUT);	
+	
+// Latch PSU_PWRDN
+	s3c2410_gpio_setpin(S3C2410_GPF(0), 0);
+	msleep(100);
+	s3c2410_gpio_setpin(S3C2410_GPF(0), 1);
+	msleep(100);
+	s3c2410_gpio_setpin(S3C2410_GPF(0), 0);
+}
+
 static void __init MEZ1500_machine_init(void)
 {
+// 20140520 SV: Added	
+	pm_power_off = MEZ1500_power_off;
+	
 #if defined (LCD_WIDTH)
 	s3c24xx_fb_set_platdata(&MEZ1500_fb_info);
 #endif

@@ -1049,9 +1049,7 @@ static struct dentry *ext3_lookup(struct inode * dir, struct dentry *dentry, str
 		inode = ext3_iget(dir->i_sb, ino);
 		if (unlikely(IS_ERR(inode))) {
 			if (PTR_ERR(inode) == -ESTALE) {
-				ext3_error(dir->i_sb, __func__,
-						"deleted inode referenced: %lu",
-						ino);
+				//ext3_error(dir->i_sb, __func__, "deleted inode referenced: %lu", ino);
 				return ERR_PTR(-EIO);
 			} else {
 				return ERR_CAST(inode);

@@ -189,7 +189,7 @@ void ext3_error (struct super_block * sb, const char * function,
 	va_list args;
 
 	va_start(args, fmt);
-	printk(KERN_CRIT "EXT3-fs error (device %s): %s: ",sb->s_id, function);
+	//printk(KERN_CRIT "EXT3-fs error (device %s): %s: ",sb->s_id, function);
 	vprintk(fmt, args);
 	printk("\n");
 	va_end(args);
@@ -247,8 +247,7 @@ void __ext3_std_error (struct super_block * sb, const char * function,
 		return;
 
 	errstr = ext3_decode_error(sb, errno, nbuf);
-	printk (KERN_CRIT "EXT3-fs error (device %s) in %s: %s\n",
-		sb->s_id, function, errstr);
+	//printk (KERN_CRIT "EXT3-fs error (device %s) in %s: %s\n", sb->s_id, function, errstr);
 
 	ext3_handle_error(sb);
 }
@@ -271,7 +270,7 @@ void ext3_abort (struct super_block * sb, const char * function,
 	printk (KERN_CRIT "ext3_abort called.\n");
 
 	va_start(args, fmt);
-	printk(KERN_CRIT "EXT3-fs error (device %s): %s: ",sb->s_id, function);
+	//printk(KERN_CRIT "EXT3-fs error (device %s): %s: ",sb->s_id, function);
 	vprintk(fmt, args);
 	printk("\n");
 	va_end(args);
