@@ -4712,9 +4712,9 @@ make_io:
 		submit_bh(READ_META, bh);
 		wait_on_buffer(bh);
 		if (!buffer_uptodate(bh)) {
-			ext4_error(sb, __func__,
+/*			ext4_error(sb, __func__,
 				   "unable to read inode block - inode=%lu, "
-				   "block=%llu", inode->i_ino, block);
+				   "block=%llu", inode->i_ino, block);*/
 			brelse(bh);
 			return -EIO;
 		}

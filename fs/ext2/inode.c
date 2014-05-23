@@ -1167,9 +1167,9 @@ Einval:
 		   (unsigned long) ino);
 	return ERR_PTR(-EINVAL);
 Eio:
-	ext2_error(sb, "ext2_get_inode",
+/*	ext2_error(sb, "ext2_get_inode",
 		   "unable to read inode block - inode=%lu, block=%lu",
-		   (unsigned long) ino, block);
+		   (unsigned long) ino, block);*/
 Egdp:
 	return ERR_PTR(-EIO);
 }

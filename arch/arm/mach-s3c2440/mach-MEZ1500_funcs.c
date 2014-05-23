@@ -7,6 +7,8 @@
 #include <linux/gpio.h>
 #include <linux/clk.h>
 #include <linux/delay.h>
+#include <linux/kmod.h>
+#include <linux/timer.h>
 
 #include <mach/mach-MEZ1500_funcs.h>
 #include <mach/regs-gpio.h>
@@ -14,14 +16,20 @@
 #include <plat/regs-timer.h>
 #include <plat/regs-adc.h>
 
-
 #define MEZ1500_BOOTING				0
 #define MEZ1500_SUSPEND   		1
 #define MEZ1500_RESUME  			2
 #define MEZ1500_READY					3
 
+#define BTN_TIMER_100mS	(HZ / 10)
+#define BTN_LONG_PRESS_TIME		30		// value * 100mS
 
+static unsigned int	 m_pwr_btn_irq_timer_en = 0;
+static unsigned long m_pwr_btn_irq_timer_count = 0;
 
+static struct timer_list m_pwr_btn_timer;
+
+static char * pwr_btn_shutdown_argv[] = { "/sbin/poweroff", NULL };
 
 int m_mez1500_state = MEZ1500_BOOTING;
 
@@ -91,10 +99,39 @@ static void mez1500_set_bl(long value)
 	__raw_writel(tcon, S3C2410_TCON);
 } 
 
+void pwr_btn_timer_irq(unsigned long arg)
+{
+	m_pwr_btn_irq_timer_count++;	
+
+	if((s3c2410_gpio_getpin(S3C2410_GPF(0)) == 0) && m_pwr_btn_irq_timer_count < BTN_LONG_PRESS_TIME)
+	{
+		printk("Sort press\n");
+		m_pwr_btn_irq_timer_en = 0;
+		m_mez1500_state = MEZ1500_SUSPEND;
+		apm_queue_event(APM_USER_SUSPEND);
+		return;
+	}
+	
+	if((s3c2410_gpio_getpin(S3C2410_GPF(0)) == 1) && m_pwr_btn_irq_timer_count > BTN_LONG_PRESS_TIME)
+	{
+		printk("Long press\n");
+		mez1500_set_bl(0);
+		m_pwr_btn_irq_timer_en = 0;
+		call_usermodehelper(pwr_btn_shutdown_argv[0], pwr_btn_shutdown_argv, NULL, UMH_NO_WAIT);
+		return;
+	}
+
+	if(s3c2410_gpio_getpin(S3C2410_GPF(0)) == 1)
+	{
+		m_pwr_btn_timer.expires = jiffies + BTN_TIMER_100mS;
+		add_timer (&m_pwr_btn_timer);
+	}
+}
+
 static irqreturn_t pwr_btn_irq(int irq, void *pw)
 {
-	//printk("\n+++pwr_btn_irq\n");
-	
+	//printk("+++pwr_btn_irq\n");
+
 	switch(m_mez1500_state)
 	{
 		case MEZ1500_BOOTING:
@@ -102,8 +139,14 @@ static irqreturn_t pwr_btn_irq(int irq, void *pw)
 			break;
 			
 		case MEZ1500_READY:
-			m_mez1500_state = MEZ1500_SUSPEND;
-			apm_queue_event(APM_USER_SUSPEND);
+			if(m_pwr_btn_irq_timer_en == 0)
+			{
+				// Init btn timer for debounce etc
+				m_pwr_btn_timer.expires = jiffies + BTN_TIMER_100mS;
+				add_timer (&m_pwr_btn_timer);
+		    m_pwr_btn_irq_timer_en = 1;
+		    m_pwr_btn_irq_timer_count = 0;
+			}
 			break;
 	}
 
@@ -139,7 +182,7 @@ static void mez1500_init_irqs(void)
 // Power on/off btn	
 	request_irq(IRQ_EINT0, pwr_btn_irq, IRQF_TRIGGER_RISING, "pwr-button-irq-eint0", NULL);
 	enable_irq_wake(IRQ_EINT0);
-	
+
 // Backlight btn	
 	request_irq(IRQ_EINT1, bl_btn_irq, IRQF_TRIGGER_RISING, "bl-button-irq-eint0", NULL);
 }
@@ -154,7 +197,6 @@ void mez1500_resume(void)
 	mez1500_set_bl(m_bl_value);
 	m_mez1500_state = MEZ1500_READY;
 }
-
 
 /*
 static void Delay(int cnt)
@@ -200,30 +242,24 @@ static unsigned int read_adc_ch(int ch)
 	}
 	
 	return (__raw_readl(S3C2410_ADCDAT0) & 0x3FF);
-	
-	
-	
 }
 */
 
-
-
-
-
-
-
 static void mez1500_apm_get_power_status(struct apm_power_info *info)
 {
-
 	//printk("\n++read_adc_ch(0) = 0x%X", read_adc_ch(0));
-	
 }
-
 
 void mez1500_init(void)
 {
+	init_timer (&m_pwr_btn_timer);
+	m_pwr_btn_timer.function = pwr_btn_timer_irq;
+	m_pwr_btn_timer.data = 0;
+	
 	mez1500_set_bl(m_bl_value);
 	mez1500_init_irqs();	
+	
+	m_mez1500_state = MEZ1500_READY;
 
 	apm_get_power_status = mez1500_apm_get_power_status;
 }

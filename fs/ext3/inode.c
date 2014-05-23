@@ -2612,10 +2612,10 @@ static int __ext3_get_inode_loc(struct inode *inode,
 
 	bh = sb_getblk(inode->i_sb, block);
 	if (!bh) {
-		ext3_error (inode->i_sb, "ext3_get_inode_loc",
+/*		ext3_error (inode->i_sb, "ext3_get_inode_loc",
 				"unable to read inode block - "
 				"inode=%lu, block="E3FSBLK,
-				 inode->i_ino, block);
+				 inode->i_ino, block);*/
 		return -EIO;
 	}
 	if (!buffer_uptodate(bh)) {
@@ -2704,10 +2704,10 @@ make_io:
 		submit_bh(READ_META, bh);
 		wait_on_buffer(bh);
 		if (!buffer_uptodate(bh)) {
-			ext3_error(inode->i_sb, "ext3_get_inode_loc",
+/*			ext3_error(inode->i_sb, "ext3_get_inode_loc",
 					"unable to read inode block - "
 					"inode=%lu, block="E3FSBLK,
-					inode->i_ino, block);
+					inode->i_ino, block);*/
 			brelse(bh);
 			return -EIO;
 		}

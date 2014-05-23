@@ -326,8 +326,8 @@ static struct inode *befs_iget(struct super_block *sb, unsigned long ino)
 
 	bh = befs_bread(sb, inode->i_ino);
 	if (!bh) {
-		befs_error(sb, "unable to read inode block - "
-			   "inode = %lu", inode->i_ino);
+/*		befs_error(sb, "unable to read inode block - "
+			   "inode = %lu", inode->i_ino);*/
 		goto unacquire_none;
 	}
 
