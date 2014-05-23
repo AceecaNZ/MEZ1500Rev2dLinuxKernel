@@ -105,7 +105,7 @@ void pwr_btn_timer_irq(unsigned long arg)
 
 	if((s3c2410_gpio_getpin(S3C2410_GPF(0)) == 0) && m_pwr_btn_irq_timer_count < BTN_LONG_PRESS_TIME)
 	{
-		printk("Sort press\n");
+		//printk("Short press\n");
 		m_pwr_btn_irq_timer_en = 0;
 		m_mez1500_state = MEZ1500_SUSPEND;
 		apm_queue_event(APM_USER_SUSPEND);
@@ -114,7 +114,7 @@ void pwr_btn_timer_irq(unsigned long arg)
 	
 	if((s3c2410_gpio_getpin(S3C2410_GPF(0)) == 1) && m_pwr_btn_irq_timer_count > BTN_LONG_PRESS_TIME)
 	{
-		printk("Long press\n");
+		//printk("Long press\n");
 		mez1500_set_bl(0);
 		m_pwr_btn_irq_timer_en = 0;
 		call_usermodehelper(pwr_btn_shutdown_argv[0], pwr_btn_shutdown_argv, NULL, UMH_NO_WAIT);
