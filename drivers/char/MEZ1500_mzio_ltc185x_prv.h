@@ -302,7 +302,7 @@
 
 #define ReadCntStart								0		// Used for discarding first sample
 #define ISRCounterReset							1		// Every 10us
-
+#define sampleSize									sizeof(unsigned short)
 
 typedef struct {
 	unsigned char	enabled;				// 1=enabled, 0=disabled
@@ -310,16 +310,35 @@ typedef struct {
   unsigned long	count;					// Sampling delay counter
   unsigned long	trig;						// trigger for setting time between samples
   
-  unsigned int	*wrP;						// write pointer to user space buffer
-  unsigned int 	*bufferStart;		// start of the user space buffer
-  unsigned int 	*bufferEnd;			// end of the user space buffer
-  unsigned long bufferSize;			// size of user space buffer (wrP will wrap around)
-	unsigned int	*numSamplesP;		// a pointer to a user space variable of samples written to user space
-} LTC185x_ChData;
+  unsigned short	*wrP;						// write pointer to user space buffer
+  unsigned short	*rdP;						// read pointer to user space buffer
+  unsigned short	*bufferStart;		// start of the user space buffer
+  unsigned short 	*bufferEnd;			// end of the user space buffer
+  unsigned int 		bufferSize;			// size of user space buffer (wrP will wrap around)
+  unsigned int		numSamples;			// number of samples currently in the buffer
+} ChData;
+
+
+#define ChSampleSize 170				// Makes a 4096 page
+typedef struct {
+	unsigned short	Ch0Buf[ChSampleSize];				
+	unsigned short	Ch1Buf[ChSampleSize];				
+	unsigned short	Ch2Buf[ChSampleSize];				
+	unsigned short	Ch3Buf[ChSampleSize];				
+	unsigned short	Ch4Buf[ChSampleSize];				
+	unsigned short	Ch5Buf[ChSampleSize];				
+	unsigned short	Ch6Buf[ChSampleSize];				
+	unsigned short	Ch7Buf[ChSampleSize];				
+	unsigned short	Ch01Buf[ChSampleSize];				
+	unsigned short	Ch23Buf[ChSampleSize];				
+	unsigned short	Ch45Buf[ChSampleSize];				
+	unsigned short	Ch67Buf[ChSampleSize];				
+} BufData;
 
 typedef struct {
-  // IRQ handling
 	unsigned char	IsOn;						// 1=IRQ is on, 0=IRQ is off
+
+  // IRQ handling
 	unsigned char InIRQ;					// 1=IRQ active, 0=IRQ not active
 	unsigned char SkipIRQ;				// 1=skip IRQ, 0=normal handling
 	
@@ -330,11 +349,11 @@ typedef struct {
 	
 	int						sampleValue;		// The sample value just read
 	
-	int						fdCh0;					// File reference for Ch0 tmp file
-	int						*Ch0Map;				// Pointer to mapped file
-	
   // Channel setup
-  LTC185x_ChData ChData[12];		// Array of 11 channels of setup information 
+  ChData 				ChData[12];			// Array of 11 channels of setup information 
+  
+  // Sample data buffer allocation
+  BufData* 			Buf;						// Main sample data buffer pointer
 
 } LTC185x_DEV;
 

@@ -82,7 +82,6 @@ static LTC185x_DEV gLTC185x;
 unsigned long gIntCount1000ms=0;
 unsigned long gGPJDAT;
 unsigned int 	gTimerReloadValue;
-struct dentry  *tmpFile;
 
 
 
@@ -188,53 +187,235 @@ static void PrvStopTimer(void)
 }
 
 
+static int PrvReadData(int ch, ReadBufferData* RdBufDat)
+{
+	unsigned int 		numSamplesToRead;				
+	unsigned int 		remainSamples;
+	unsigned long		numBytes;
+	unsigned long		retVal;
+
+	printk("PrvReadData\n");
+
+	// Check for an overun, set the user space variable to indicate this
+	if (gLTC185x.ChData[ch].numSamples > ChSampleSize)
+	{
+		printk("Overun detected!!\n");
+
+		if (RdBufDat->overun)
+			if (put_user(1, RdBufDat->overun)) return -EFAULT;
+	}
+
+	// If read and write pointers are equal no new data has come, return 0
+	if (gLTC185x.ChData[ch].rdP == gLTC185x.ChData[ch].wrP) 
+	{
+		printk("No data\n");
+		return 0;
+	}
+
+	// Check if write pointer has wrapped around, read pointer will then be ahead
+	if (gLTC185x.ChData[ch].rdP > gLTC185x.ChData[ch].wrP) 
+	{						
+		// Write pointer has wrapped around
+		numSamplesToRead = gLTC185x.ChData[ch].bufferEnd - gLTC185x.ChData[ch].rdP;												
+		remainSamples = gLTC185x.ChData[ch].wrP - gLTC185x.ChData[ch].bufferStart;	
+
+		printk("rdP>wrP numSamplesToRead=%d remainSamples=%d userBuf=0x%lx samplesRequested=%d\n", 
+			numSamplesToRead, 
+			remainSamples, 
+			(unsigned long) RdBufDat->buf,
+			RdBufDat->numSamples
+			);
+
+		// If there is no user buffer, return the number of samples available
+		if (!RdBufDat->buf) 
+			return (numSamplesToRead + remainSamples);
+
+		// Check how many bytes to transfer
+		if ((numSamplesToRead + remainSamples) < RdBufDat->numSamples)
+		{
+			printk("... ALL\n");
+
+			// Transfer all the samples
+			// Copy to user buf
+			numBytes = numSamplesToRead * sampleSize;
+			if (copy_to_user(gLTC185x.ChData[ch].rdP, &RdBufDat->buf[0], numBytes)) 
+				return -EFAULT;							
+
+			// Decrement the sample count
+			gLTC185x.ChData[ch].numSamples -= numSamplesToRead;
+									
+			// Copy remainder to user buf
+			numBytes = remainSamples * sampleSize;
+			if (copy_to_user(gLTC185x.ChData[ch].bufferStart, &RdBufDat->buf[numSamplesToRead], numBytes)) 
+				return -EFAULT;							
+
+			// Decrement the sample count
+			gLTC185x.ChData[ch].numSamples -= remainSamples;
+										
+			// Update read pointer
+			gLTC185x.ChData[ch].rdP = gLTC185x.ChData[ch].bufferStart + numBytes;
+
+			printk("rdP=0x%lx\n", (unsigned long) gLTC185x.ChData[ch].rdP);
+
+		}
+		else
+		{					
+			printk("... PART\n");
+	
+			// Copy a portion of the sample data
+			if (numSamplesToRead < RdBufDat->numSamples)
+			{
+				printk("... TOP\n");
+
+				// Copy to user buf
+				numBytes = numSamplesToRead * sampleSize;
+				if (copy_to_user(gLTC185x.ChData[ch].rdP, &RdBufDat->buf[0], numBytes)) 
+					return -EFAULT;							
+
+				// Decrement the sample count
+				gLTC185x.ChData[ch].numSamples -= numSamplesToRead;
+				
+				// Calculate the remaining samples to transfer
+				remainSamples = RdBufDat->numSamples - numSamplesToRead;
+
+				printk("... BOTTOM\n");
+
+				// Copy remainder to user buf
+				numBytes = remainSamples * sampleSize;
+				if (copy_to_user(gLTC185x.ChData[ch].bufferStart, &RdBufDat->buf[numSamplesToRead], numBytes)) 
+					return -EFAULT;							
+
+				// Decrement the sample count
+				gLTC185x.ChData[ch].numSamples -= remainSamples;
+
+				// Update read pointer
+				gLTC185x.ChData[ch].rdP = &gLTC185x.ChData[ch].bufferStart[remainSamples];
+
+				printk("rdP=0x%lx\n", (unsigned long) gLTC185x.ChData[ch].rdP);		
+			}
+			else
+			{
+				printk("... TOP ONLY\n");
+
+				// Only read the number of samples requested
+				numSamplesToRead = RdBufDat->numSamples;
+
+				// Copy to user buf
+				numBytes = numSamplesToRead * sampleSize;
+				if (copy_to_user(gLTC185x.ChData[ch].rdP, &RdBufDat->buf[0], numBytes)) 
+					return -EFAULT;							
+
+				// Decrement the sample count
+				gLTC185x.ChData[ch].numSamples -= numSamplesToRead;
+
+				// Update read pointer
+				gLTC185x.ChData[ch].rdP += numSamplesToRead * sampleSize;
+
+				printk("rdP=0x%lx\n", (unsigned long) gLTC185x.ChData[ch].rdP);		
+			}
+		}
+	} 
+	else // gLTC185x.ChData[ch].rdP < gLTC185x.ChData[ch].wrP)
+	{
+		numSamplesToRead = gLTC185x.ChData[ch].wrP - gLTC185x.ChData[ch].rdP;
+
+		printk("rdP<wrP numSamplesToRead=%d userBuf=0x%lx\n", 
+			numSamplesToRead, 
+			(unsigned long) RdBufDat->buf);
+		
+		// If there is no user buffer, return the number of samples available
+		if (!RdBufDat->buf) 
+		{
+			printk("No buffer!\n");
+			return numSamplesToRead;
+		}
+
+		// Check to see how many samples to return
+		if (numSamplesToRead > RdBufDat->numSamples)
+			numSamplesToRead = RdBufDat->numSamples;
+
+		numBytes = numSamplesToRead * sampleSize;
+		if (access_ok(VERIFY_WRITE, RdBufDat->buf, numBytes))
+		{
+			unsigned short tempBuf[5] = {1,2,3,4,5};
+			retVal = copy_to_user(tempBuf, RdBufDat->buf, sizeof(tempBuf));
+//			retVal = copy_to_user(gLTC185x.ChData[ch].rdP, RdBufDat->buf, numBytes);
+			if (retVal) 
+			{
+				printk("Copy to user failed 0x%lx->0x%lx %ld bytes, retVal=%ld\n", 
+					(unsigned long) gLTC185x.ChData[ch].rdP, 
+					(unsigned long) RdBufDat->buf, 
+					numBytes,
+					retVal
+					);
+								
+				return -EFAULT;							
+			}
+		}
+		else
+		{
+			printk("Can't write to user buf 0x%lx\n", (unsigned long) RdBufDat->buf); 			
+		}
+				
+		// Decrement the sample count
+		gLTC185x.ChData[ch].numSamples -= (numSamplesToRead);
+
+		// Update read pointer
+		gLTC185x.ChData[ch].rdP += numBytes;
+
+		printk("   rdP=0x%lx\n", (unsigned long) gLTC185x.ChData[ch].rdP);		
+	}
+	
+	return 0;	
+}
+
 
 
 // ------------------------------------------------------------------
 // Driver routines
 // ------------------------------------------------------------------
 // Read handler
-void do_read_tasklet(unsigned long unused)
-{
-	printk("reading::\n");
-
-	// Only doing Ch0 for now
-	if (gLTC185x.rdCh == Ch0)
-	{
-		unsigned int numSamples;
-
-		printk("Ch%d %x to 0x%lx\n", gLTC185x.rdCh, gLTC185x.sampleValue, (unsigned long) gLTC185x.ChData[Ch0].wrP);
-		
-		// Write sample to user space
-		put_user(gLTC185x.sampleValue,	gLTC185x.ChData[Ch0].wrP);
-		
-		// Wrap pointer around if necessary 
-		gLTC185x.ChData[Ch0].wrP++;
-		if (gLTC185x.ChData[Ch0].wrP > gLTC185x.ChData[Ch0].bufferEnd) 
-		{
-				gLTC185x.ChData[Ch0].wrP = gLTC185x.ChData[Ch0].bufferStart;
-				printk("     wrap\n");
-		}
-			
-		// Increment number of samples (note: this might be changed in user space, hence read-modify-write
-		// TODO: potential race condition here!!
-		if (get_user(numSamples, gLTC185x.ChData[Ch0].numSamplesP) == 0);
-		{
-			printk("numSamples=%d 0x%lx\n", numSamples, (unsigned long)gLTC185x.ChData[Ch0].numSamplesP);
-			numSamples++;
-			if (put_user(numSamples, gLTC185x.ChData[Ch0].numSamplesP))
-			{
-				printk("error writing numSamples\n");					
-			}
-
-			if (copy_to_user(gLTC185x.ChData[Ch0].numSamplesP, &numSamples, sizeof(numSamples)))
-			{
-				printk("error copy_to_user\n");											
-			}
-		}
-	}			
-}
-DECLARE_TASKLET(read_tasklet, do_read_tasklet, 0);
+//void do_read_tasklet(unsigned long unused)
+//{
+//	printk("reading::\n");
+//
+//	// Only doing Ch0 for now
+//	if (gLTC185x.rdCh == Ch0)
+//	{
+//		unsigned int numSamples;
+//
+//		printk("Ch%d %x to 0x%lx\n", gLTC185x.rdCh, gLTC185x.sampleValue, (unsigned long) gLTC185x.ChData[Ch0].wrP);
+//		
+//		// Write sample to user space
+//		put_user(gLTC185x.sampleValue,	gLTC185x.ChData[Ch0].wrP);
+//		
+//		// Wrap pointer around if necessary 
+//		gLTC185x.ChData[Ch0].wrP++;
+//		if (gLTC185x.ChData[Ch0].wrP > gLTC185x.ChData[Ch0].bufferEnd) 
+//		{
+//				gLTC185x.ChData[Ch0].wrP = gLTC185x.ChData[Ch0].bufferStart;
+//				printk("     wrap\n");
+//		}
+//			
+//		// Increment number of samples (note: this might be changed in user space, hence read-modify-write
+//		// TODO: potential race condition here!!
+//		if (get_user(numSamples, gLTC185x.ChData[Ch0].numSamplesP) == 0);
+//		{
+//			printk("numSamples=%d 0x%lx\n", numSamples, (unsigned long)gLTC185x.ChData[Ch0].numSamplesP);
+//			numSamples++;
+//			if (put_user(numSamples, gLTC185x.ChData[Ch0].numSamplesP))
+//			{
+//				printk("error writing numSamples\n");					
+//			}
+//
+//			if (copy_to_user(gLTC185x.ChData[Ch0].numSamplesP, &numSamples, sizeof(numSamples)))
+//			{
+//				printk("error copy_to_user\n");											
+//			}
+//		}
+//	}			
+//}
+//DECLARE_TASKLET(read_tasklet, do_read_tasklet, 0);
 
 // Timer interrupt handler
 /*
@@ -329,10 +510,6 @@ static irqreturn_t TimerINTHandler(int irq,void *TimDev)
 			 	
 		// Send the SPI control code 	
 		// Send control byte
-//		sampleH = PrvSPISendReceiveData(gLTC185x.ChData[gLTC185x.wrCh].control); 		
-		// Sending dummy
-//		sampleL = PrvSPISendReceiveData(0xFF);	  																
-		// Send a byte
 		SPTDAT = gLTC185x.ChData[gLTC185x.wrCh].control;
 		// Wait until full 8 bits are sent
 		while (!(SPSTA & S3C2410_SPSTA_READY)) continue;
@@ -407,10 +584,9 @@ static irqreturn_t TimerINTHandler(int irq,void *TimDev)
 			// Ensure that the next read is skipped
 			gLTC185x.skipRead = 1;
 		
-			// For now just print out the value to the log	
 			// Note: If we have reached here, the final read is for the last channel written
 			gLTC185x.rdCh = gLTC185x.wrCh;
-
+			
 			takeReading = 1;			
 		}
 	}
@@ -419,7 +595,22 @@ static irqreturn_t TimerINTHandler(int irq,void *TimDev)
 	{
 		// Write the sample value to a temporary buffer that will be handled by the tasklet	
 		gLTC185x.sampleValue = sampleValue;
-		tasklet_schedule(&read_tasklet);
+
+//		tasklet_schedule(&read_tasklet);
+
+		// Record the sample in the appropriate buffer
+		printk("takeReading wrP 0x%lx %x numsam=%d\n", 
+			(unsigned long) gLTC185x.ChData[gLTC185x.rdCh].wrP, 
+			sampleValue, 
+			gLTC185x.ChData[gLTC185x.rdCh].numSamples
+			);
+
+		*gLTC185x.ChData[gLTC185x.rdCh].wrP++ = sampleValue;
+		gLTC185x.ChData[gLTC185x.rdCh].numSamples++;
+
+		// Wrap around if necessary
+		if (gLTC185x.ChData[gLTC185x.rdCh].wrP >= gLTC185x.ChData[gLTC185x.rdCh].bufferEnd)
+			gLTC185x.ChData[gLTC185x.rdCh].wrP = gLTC185x.ChData[gLTC185x.rdCh].bufferStart;
 	}
 	
 exit:
@@ -439,14 +630,42 @@ exit:
 }
 
 
+
+
+
+
 static int sbc2440_mzio_LTC185x_ioctl(
 	struct inode *inode,
 	struct file *file,
 	unsigned int cmd,
 	unsigned long arg)
 {
-	switch(cmd)
+	
+	// Are we turned on already?
+	if (gLTC185x.IsOn)
 	{
+		if (cmd == MZIO_LTC185x_STOP)
+		{
+				printk("LTC185x: Stop++\n");
+				
+				// Wait for IRQ activity to stop first
+				while (gLTC185x.InIRQ) continue;
+				
+				// Disable the timer
+				PrvStopTimer();
+	
+				// Mark the device is now off
+				gLTC185x.IsOn 		= 0;
+		    
+				printk("LTC185x: Stop--\n");
+				return 0;
+		}
+		if (!MZIO_LTC185x_CH0SE_READ_BUFFER) 
+			return -EFAULT;
+	}
+
+	switch(cmd)
+	{			
 		// -----------------------------------------------------
 		// Init routines
 		// -----------------------------------------------------
@@ -489,7 +708,7 @@ static int sbc2440_mzio_LTC185x_ioctl(
 
 		case MZIO_LTC185x_DEINIT:
 			printk("LTC185x: Deinit++\n");
-
+	
 			// Stop the timer
 			PrvStopTimer();
 
@@ -522,18 +741,49 @@ static int sbc2440_mzio_LTC185x_ioctl(
 			printk("LTC185x: Deinit--\n");
 			return 0;
 
+		// -----------------------------------------------------
+		// Start sampling
+		// -----------------------------------------------------
+		case MZIO_LTC185x_START:
+			printk("LTC185x: Start++\n");
+	
+			// Allocate start values
+			gLTC185x.wrCh			=	ChMax;
+			gLTC185x.readCnt	=	ReadCntStart;
+			gLTC185x.skipRead	=	1;
+			gIntCount1000ms 	= Timer1000ms*5;
+			gLTC185x.IsOn 		= 1;
+
+			// Zero the sample buffer
+			memset(gLTC185x.Buf, 0, sizeof(BufData));
+
+//			PrvStartTimer();
+			
+			printk("LTC185x: Start--\n");
+			return 0;	
 
 		// -----------------------------------------------------
 		// ADC Channel setup routines
 		// -----------------------------------------------------
-		case MZIO_LTC185x_CH0SE_SETUP:
+		case MZIO_LTC185x_CH0SE_SETUP:	
 			gLTC185x.ChData[Ch0].enabled = 	(arg && LTC185x_ChSetup_Enabled);
 			gLTC185x.ChData[Ch0].control = 	0;
 			gLTC185x.ChData[Ch0].control |=	(arg & 0xFF) | ADC_SINGLE_ENDED_INPUT0;
-			printk("LTC185x: CH0SE_SETUP arg=0x%lx .enabled=%d .control=0x%x\n",
+
+			gLTC185x.ChData[Ch0].bufferStart  = gLTC185x.Buf->Ch0Buf;
+			gLTC185x.ChData[Ch0].wrP 					= gLTC185x.ChData[Ch0].bufferStart;
+			gLTC185x.ChData[Ch0].rdP 					= gLTC185x.ChData[Ch0].wrP;
+			gLTC185x.ChData[Ch0].bufferSize		= ChSampleSize * sampleSize;
+			gLTC185x.ChData[Ch0].bufferEnd		= gLTC185x.ChData[Ch0].bufferStart + gLTC185x.ChData[Ch0].bufferSize;
+			
+			printk("LTC185x: CH0SE_SETUP arg=0x%lx enabled=%d .control=0x%x buf={0x%lx 0x%lx} sz=%d bytes\n",
 				arg, 
 				gLTC185x.ChData[Ch0].enabled, 
-				gLTC185x.ChData[Ch0].control);
+				gLTC185x.ChData[Ch0].control,
+				(unsigned long) gLTC185x.ChData[Ch0].bufferStart,
+				(unsigned long) gLTC185x.ChData[Ch0].bufferEnd,
+				gLTC185x.ChData[Ch0].bufferSize
+				);
 			return 0;
 
 		case MZIO_LTC185x_CH0SE_SET_PERIOD:
@@ -544,95 +794,69 @@ static int sbc2440_mzio_LTC185x_ioctl(
 				gLTC185x.ChData[Ch0].trig);
 			return 0;
 
-		case MZIO_LTC185x_CH0SE_SET_BUFFER:
+		case MZIO_LTC185x_CH0SE_READ_BUFFER:
 			{
-				ChBufferData ChBufDat;
-				
 				// Get data from user space
-				printk("LTC185x: CH0SE_SET_BUFFER arg 0x%lx\n",  arg);
-				if (copy_from_user(&ChBufDat, (void __user*)arg, sizeof(ChBufferData))) return -EFAULT;
+				ReadBufferData 	RdBufDat;
+
+				printk("CH0SE_READ_BUFFER\n");
+				if (copy_from_user(&RdBufDat, (void __user*)arg, sizeof(ReadBufferData))) return -EFAULT;							
 					
-				gLTC185x.ChData[Ch0].wrP 					= ChBufDat.bufferStart;
-				gLTC185x.ChData[Ch0].bufferStart 	= gLTC185x.ChData[Ch0].wrP;
-				gLTC185x.ChData[Ch0].bufferSize		= ChBufDat.bufferSize;
-				gLTC185x.ChData[Ch0].bufferEnd		= gLTC185x.ChData[Ch0].bufferStart + gLTC185x.ChData[Ch0].bufferSize;
-				gLTC185x.ChData[Ch0].numSamplesP	= ChBufDat.numSamplesP;
-				
-				printk("LTC185x: CH0SE_SET_BUFFER start=0x%lx, size=%ld, numSamP=0x%lx\n", 
-					(unsigned long) gLTC185x.ChData[Ch0].wrP,
-					gLTC185x.ChData[Ch0].bufferSize,
-					(unsigned long) gLTC185x.ChData[Ch0].numSamplesP
-					);
-					
-				// Test
-				if (put_user(55, gLTC185x.ChData[Ch0].numSamplesP))
-				{
-					printk("error put_user\n");					
-				}
-				
-/*
-				{
-					unsigned int temp = 55;
-					if (copy_to_user(gLTC185x.ChData[Ch0].numSamplesP, &temp, sizeof(temp)))
-					{
-						printk("error copy_to_user\n");											
-					}
-				}
-*/
+				return PrvReadData(Ch0, &RdBufDat);
 			}
 			return 0;
 
 
 		// -----------------------------------------------------
-		case MZIO_LTC185x_CH1SE_SETUP:
+		case MZIO_LTC185x_CH1SE_SETUP:	
 			gLTC185x.ChData[Ch1].enabled = 	(arg && LTC185x_ChSetup_Enabled);
 			gLTC185x.ChData[Ch1].control = 	0;
 			gLTC185x.ChData[Ch1].control |=	(arg & 0xFF) | ADC_SINGLE_ENDED_INPUT1;
 			return 0;
 
-		case MZIO_LTC185x_CH1SE_SET_PERIOD:
+		case MZIO_LTC185x_CH1SE_SET_PERIOD:	
 			gLTC185x.ChData[Ch1].trig 	= 	arg / Timer1uSDivideRatio;
 			gLTC185x.ChData[Ch1].count 	= 	gLTC185x.ChData[Ch0].trig;
 			return 0;
 
 		// -----------------------------------------------------
-		case MZIO_LTC185x_CH2SE_SETUP:
+		case MZIO_LTC185x_CH2SE_SETUP:	
 			gLTC185x.ChData[Ch2].enabled = 	(arg && LTC185x_ChSetup_Enabled);
 			gLTC185x.ChData[Ch2].control = 	0;
 			gLTC185x.ChData[Ch2].control |=	(arg & 0xFF) | ADC_SINGLE_ENDED_INPUT2;
 			return 0;
 
-		case MZIO_LTC185x_CH2SE_SET_PERIOD:
+		case MZIO_LTC185x_CH2SE_SET_PERIOD:	
 			gLTC185x.ChData[Ch2].trig 	= 	arg / Timer1uSDivideRatio;
 			gLTC185x.ChData[Ch2].count 	= 	gLTC185x.ChData[Ch0].trig;
 			return 0;
 
 		// -----------------------------------------------------
-		case MZIO_LTC185x_CH3SE_SETUP:
+		case MZIO_LTC185x_CH3SE_SETUP:	
 			gLTC185x.ChData[Ch3].enabled = 	(arg && LTC185x_ChSetup_Enabled);
 			gLTC185x.ChData[Ch3].control = 	arg;
 			gLTC185x.ChData[Ch3].control |=	(arg & 0xFF) | ADC_SINGLE_ENDED_INPUT3;
 			return 0;
 
-		case MZIO_LTC185x_CH3SE_SET_PERIOD:
+		case MZIO_LTC185x_CH3SE_SET_PERIOD:	
 			gLTC185x.ChData[Ch3].trig 	= 	arg / Timer1uSDivideRatio;
 			gLTC185x.ChData[Ch3].count 	= 	gLTC185x.ChData[Ch0].trig;
 			return 0;
 
 		// -----------------------------------------------------
-		case MZIO_LTC185x_CH4SE_SETUP:
+		case MZIO_LTC185x_CH4SE_SETUP:	
 			gLTC185x.ChData[Ch4].enabled = 	(arg && LTC185x_ChSetup_Enabled);
 			gLTC185x.ChData[Ch4].control = 	arg;
 			gLTC185x.ChData[Ch4].control |=	(arg & 0xFF) | ADC_SINGLE_ENDED_INPUT4;
 			return 0;
 
-		case MZIO_LTC185x_CH4SE_SET_PERIOD:
+		case MZIO_LTC185x_CH4SE_SET_PERIOD:	
 			gLTC185x.ChData[Ch4].trig 	= 	arg / Timer1uSDivideRatio;
 			gLTC185x.ChData[Ch4].count 	= 	gLTC185x.ChData[Ch0].trig;
 			return 0;
 
 		// -----------------------------------------------------
-		case MZIO_LTC185x_CH5SE_SETUP:
+		case MZIO_LTC185x_CH5SE_SETUP:	
 			gLTC185x.ChData[Ch5].enabled = 	(arg && LTC185x_ChSetup_Enabled);
 			gLTC185x.ChData[Ch5].control = 	arg;
 			gLTC185x.ChData[Ch5].control |=	(arg & 0xFF) | ADC_SINGLE_ENDED_INPUT5;
@@ -644,73 +868,73 @@ static int sbc2440_mzio_LTC185x_ioctl(
 			return 0;
 
 		// -----------------------------------------------------
-		case MZIO_LTC185x_CH6SE_SETUP:
+		case MZIO_LTC185x_CH6SE_SETUP:	
 			gLTC185x.ChData[Ch6].enabled = 	(arg && LTC185x_ChSetup_Enabled);
 			gLTC185x.ChData[Ch6].control = 	arg;
 			gLTC185x.ChData[Ch6].control |=	(arg & 0xFF) | ADC_SINGLE_ENDED_INPUT6;
 			return 0;
 
-		case MZIO_LTC185x_CH6SE_SET_PERIOD:
+		case MZIO_LTC185x_CH6SE_SET_PERIOD:	
 			gLTC185x.ChData[Ch6].trig 	= 	arg / Timer1uSDivideRatio;
 			gLTC185x.ChData[Ch6].count 	= 	gLTC185x.ChData[Ch0].trig;
 			return 0;
 
 		// -----------------------------------------------------
-		case MZIO_LTC185x_CH7SE_SETUP:
+		case MZIO_LTC185x_CH7SE_SETUP:	
 			gLTC185x.ChData[Ch7].enabled = 	(arg && LTC185x_ChSetup_Enabled);
 			gLTC185x.ChData[Ch7].control = 	0;
 			gLTC185x.ChData[Ch7].control |=	(arg & 0xFF) | ADC_SINGLE_ENDED_INPUT7;
 			return 0;
 
-		case MZIO_LTC185x_CH7SE_SET_PERIOD:
+		case MZIO_LTC185x_CH7SE_SET_PERIOD:	
 			gLTC185x.ChData[Ch7].trig 	= 	arg / Timer1uSDivideRatio;
 			gLTC185x.ChData[Ch7].count 	= 	gLTC185x.ChData[Ch0].trig;
 			return 0;
 
 		// -----------------------------------------------------
-		case MZIO_LTC185x_CH01DE_SETUP:
+		case MZIO_LTC185x_CH01DE_SETUP:	
 			gLTC185x.ChData[Ch01].enabled = 	(arg && LTC185x_ChSetup_Enabled);
 			gLTC185x.ChData[Ch01].control = 	arg;
 			gLTC185x.ChData[Ch01].control |=	(arg & 0xFF) | ADC_SINGLE_ENDED_INPUT01;
 			return 0;
 
-		case MZIO_LTC185x_CH01SE_SET_PERIOD:
+		case MZIO_LTC185x_CH01SE_SET_PERIOD:	
 			gLTC185x.ChData[Ch01].trig 	= 	arg / Timer1uSDivideRatio;
 			gLTC185x.ChData[Ch01].count 	= 	gLTC185x.ChData[Ch0].trig;
 			return 0;
 
 		// -----------------------------------------------------
-		case MZIO_LTC185x_CH23DE_SETUP:
+		case MZIO_LTC185x_CH23DE_SETUP:	
 			gLTC185x.ChData[Ch23].enabled = 	(arg && LTC185x_ChSetup_Enabled);
 			gLTC185x.ChData[Ch23].control = 	arg;
 			gLTC185x.ChData[Ch23].control |=	(arg & 0xFF) | ADC_SINGLE_ENDED_INPUT23;
 			return 0;
 
-		case MZIO_LTC185x_CH23SE_SET_PERIOD:
+		case MZIO_LTC185x_CH23SE_SET_PERIOD:	
 			gLTC185x.ChData[Ch23].trig 	= 	arg / Timer1uSDivideRatio;
 			gLTC185x.ChData[Ch23].count 	= 	gLTC185x.ChData[Ch0].trig;
 			return 0;
 
 		// -----------------------------------------------------
-		case MZIO_LTC185x_CH45DE_SETUP:
+		case MZIO_LTC185x_CH45DE_SETUP:	
 			gLTC185x.ChData[Ch45].enabled = 	(arg && LTC185x_ChSetup_Enabled);
 			gLTC185x.ChData[Ch45].control = 	arg;
 			gLTC185x.ChData[Ch45].control |=	(arg & 0xFF) | ADC_SINGLE_ENDED_INPUT45;
 			return 0;
 
-		case MZIO_LTC185x_CH45SE_SET_PERIOD:
+		case MZIO_LTC185x_CH45SE_SET_PERIOD:	
 			gLTC185x.ChData[Ch45].trig 	= 	arg / Timer1uSDivideRatio;
 			gLTC185x.ChData[Ch45].count 	= 	gLTC185x.ChData[Ch0].trig;
 			return 0;
 
 		// -----------------------------------------------------
-		case MZIO_LTC185x_CH67DE_SETUP:
+		case MZIO_LTC185x_CH67DE_SETUP:	
 			gLTC185x.ChData[Ch67].enabled = 	(arg && LTC185x_ChSetup_Enabled);
 			gLTC185x.ChData[Ch67].control = 	arg;
 			gLTC185x.ChData[Ch67].control |=	(arg & 0xFF) | ADC_SINGLE_ENDED_INPUT67;
 			return 0;
 
-		case MZIO_LTC185x_CH67SE_SET_PERIOD:
+		case MZIO_LTC185x_CH67SE_SET_PERIOD:	
 			gLTC185x.ChData[Ch67].trig 	= 	arg / Timer1uSDivideRatio;
 			gLTC185x.ChData[Ch67].count 	= 	gLTC185x.ChData[Ch0].trig;
 			return 0;
@@ -781,79 +1005,7 @@ static int sbc2440_mzio_LTC185x_ioctl(
 			}
 			return 0;
 
-
-		// -----------------------------------------------------
-		// Start/stop sampling
-		// -----------------------------------------------------
-		case MZIO_LTC185x_START:
-			printk("LTC185x: Start++\n");
-
-			PrvStartTimer();
-			gLTC185x.wrCh=ChMax;
-			gLTC185x.readCnt=ReadCntStart;
-			gLTC185x.skipRead=1;
-			gIntCount1000ms = Timer1000ms*5;
-			
-//			// Create the temp file
-//			gLTC185x.fdCh0 = open(Ch0Filename, O_RDWR | O_CREAT | O_TRUNC, (mode_t)0600);
-//	    if (gLTC185x.fdCh0 == -1) {
-//				printk("LTC185x: Failed to open file\n");
-//				return -EFAULT;
-//	    }
-//			
-//			// Stretch the file size to the size of the (mmapped) array of ints
-//	    if (lseek(gLTC185x.fdCh0, filesize-1, SEEK_SET) == -1) {
-//				close(gLTC185x.fdCh0);
-//				printk("LTC185x: Failed to lseek() strecth the file\n");
-//				return -EFAULT;
-//	    }
-//
-//			/* Something needs to be written at the end of the file to
-//			 * have the file actually have the new size.
-//			 * Just writing an empty string at the current file position will do.
-//			 *
-//			 * Note:
-//			 *  - The current position in the file is at the end of the stretched 
-//			 *    file due to the call to lseek().
-//			 *  - An empty string is actually a single '\0' character, so a zero-byte
-//			 *    will be written at the last byte of the file.
-//			 */
-//			if (write(gLTC185x.fdCh0, "", 1) != 1) {
-//				close(gLTC185x.fdCh0);
-//				printk("LTC185x: Failed to write last byte\n");
-//				return -EFAULT;
-//			}
-//
-//	    /* Now the file is ready to be mmapped.
-//	     */
-//	    gLTC185x.Ch0Map = mmap(0, filesize, PROT_READ | PROT_WRITE, MAP_SHARED, gLTC185x.fdCh0, 0);
-//	    if (gLTC185x.Ch0Map == MAP_FAILED) {
-//				close(gLTC185x.fdCh0);
-//				printk("LTC185x: Failed to map the file\n");
-//				return -EFAULT;
-//	    }
-	    
-			
-			printk("LTC185x: Start--\n");
-			return 0;
-
-		case MZIO_LTC185x_STOP:
-			printk("LTC185x: Stop++\n");
-			PrvStopTimer();
-						
-//	    // Don't forget to free the mmapped memory
-//	    if (munmap(gLTC185x.gLTC185x.Ch0Map, filesize) == -1) {
-//				printk("LTC185x: Failed to unmap the file\n");
-//				return -EFAULT;
-//	    }
-//	    
-//	    // Close the file
-//			close(gLTC185x.fdCh0);
-	    
-			printk("LTC185x: Stop--\n");
-			return 0;
-
-
+		
 		case MZIO_LTC185x_READ:
 			printk("LTC185x: Read to 0x%lx\n", arg);
 			
@@ -924,113 +1076,6 @@ static struct miscdevice misc = {
 	.fops = &dev_fops,
 };
 
-
-
-
-
-
-
-
-
-//---------------------------------------------------------------------------------------------
-//	mmap routines
-//---------------------------------------------------------------------------------------------
-/* keep track of how many times it is mmapped */
-void mmap_open(struct vm_area_struct *vma)
-{
-	struct mmap_tmpFile_info *info = (struct mmap_tmpFile_info *)vma->vm_private_data;
-	info->reference++;
-
-	printk("LTC185x mmap_open\n");
-}
-
-void mmap_close(struct vm_area_struct *vma)
-{
-	struct mmap_tmpFile_info *info = (struct mmap_tmpFile_info *)vma->vm_private_data;
-	info->reference--;
-
-	printk("LTC185x mmap_close\n");
-}
-
-static int mmap_fault(struct vm_area_struct *vma, struct vm_fault *vmf)
-{
-	struct page *page;
-	struct mmap_tmpFile_info *info;
-
-	printk("LTC185x mmap_fault\n");
-
-	/* the data is in vma->vm_private_data */
-	info = (struct mmap_tmpFile_info *)vma->vm_private_data;
-	if (!info->data) {
-		printk("no data\n");
-		return 0;	
-	}
-
-	/* get the page */
-	page = virt_to_page(info->data);
-	
-	/* increment the reference count of this page */
-	get_page(page);
-	vmf->page = page;					//--changed
-	return 0;
-}
-
-
-struct vm_operations_struct mmap_vm_ops = {
-	.open =     mmap_open,
-	.close =    mmap_close,
-	.fault =    mmap_fault,
-};
-
-
-int my_mmap(struct file *filp, struct vm_area_struct *vma)
-{
-	printk("LTC185x my_mmap\n");
-
-	vma->vm_ops = &mmap_vm_ops;
-	vma->vm_flags |= VM_RESERVED;
-	/* assign the file private data to the vm private data */
-	vma->vm_private_data = filp->private_data;
-	mmap_open(vma);
-	return 0;
-}
-
-int my_close(struct inode *inode, struct file *filp)
-{
-	struct mmap_tmpFile_info *info = filp->private_data;
-	/* obtain new memory */
-	printk("LTC185x my_close\n");
-
-	free_page((unsigned long)info->data);
-    	kfree(info);
-	filp->private_data = NULL;
-	return 0;
-}
-
-
-int my_open(struct inode *inode, struct file *filp)
-{
-	struct mmap_tmpFile_info *info = kmalloc(sizeof(struct mmap_tmpFile_info), GFP_KERNEL);
-	/* obtain new memory */
-    	info->data = (char *)get_zeroed_page(GFP_KERNEL);
-
-	printk("LTC185x my_open\n");
-
-	memcpy(info->data, "hello from kernel this is file: ", 32);
-	memcpy(info->data + 32, filp->f_dentry->d_name.name, strlen(filp->f_dentry->d_name.name));
-	/* assign this info struct to the file */
-	filp->private_data = info;
-	return 0;
-}
-
-static const struct file_operations my_fops = {
-	.open = my_open,
-	.release = my_close,
-	.mmap = my_mmap,
-};
-
-
-
 //---------------------------------------------------------------------------------------------
 //	Init routines
 //---------------------------------------------------------------------------------------------
@@ -1040,6 +1085,19 @@ static int __init dev_init(void)
 
 	printk(DEVICE_NAME"\tversion %d%02d%02d%02d%02d\tinitialized\n", GetCompileYear(),
 	GetCompileMonth(), GetCompileDay(), GetCompileHour(), GetCompileMinute());
+
+
+	// Zero the globals
+	memset(&gLTC185x, 0, sizeof(LTC185x_DEV));
+
+	// Allocate memory
+	gLTC185x.Buf = kmalloc(sizeof(BufData), GFP_KERNEL);
+	if (!gLTC185x.Buf) 
+	{
+		printk("Error allocating memory\n");
+		return -ENOMEM;
+	}
+
 
 	base_addr_SPI = ioremap(S3C2410_PA_SPI,0x20);
 	if (base_addr_SPI == NULL) {
@@ -1059,11 +1117,6 @@ static int __init dev_init(void)
 		return -ENOMEM;
 	}
 
-
-	// Create a temporary debugfs file to share data with a user space app
-	tmpFile = debugfs_create_file("LTC185x_tmp", 0644, NULL, NULL, &my_fops);
-	printk("tmpFile 0x%lx\n", (unsigned long) tmpFile);
-
 	ret = misc_register(&misc);
 
 	return ret;
@@ -1079,9 +1132,9 @@ static void __exit dev_exit(void)
 		s3c2410_timer_irq.dev_id = 0;
 	}
 
-	// Get rid of the debugfs file		
-	debugfs_remove(tmpFile);
-		
+	// Free the allocated memory
+	if (gLTC185x.Buf) kfree(gLTC185x.Buf);
+	
 	misc_deregister(&misc);
 }
 
