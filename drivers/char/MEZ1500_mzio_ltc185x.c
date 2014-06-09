@@ -337,9 +337,7 @@ static int PrvReadData(int ch, ReadBufferData* RdBufDat)
 		numBytes = numSamplesToRead * sampleSize;
 		if (access_ok(VERIFY_WRITE, RdBufDat->buf, numBytes))
 		{
-			unsigned short tempBuf[5] = {1,2,3,4,5};
-			retVal = copy_to_user(tempBuf, RdBufDat->buf, sizeof(tempBuf));
-//			retVal = copy_to_user(gLTC185x.ChData[ch].rdP, RdBufDat->buf, numBytes);
+			retVal = copy_to_user(gLTC185x.ChData[ch].rdP, RdBufDat->buf, numBytes);
 			if (retVal) 
 			{
 				printk("Copy to user failed 0x%lx->0x%lx %ld bytes, retVal=%ld\n", 
@@ -802,7 +800,20 @@ static int sbc2440_mzio_LTC185x_ioctl(
 				printk("CH0SE_READ_BUFFER\n");
 				if (copy_from_user(&RdBufDat, (void __user*)arg, sizeof(ReadBufferData))) return -EFAULT;							
 					
-				return PrvReadData(Ch0, &RdBufDat);
+				{
+					int retVal;
+					unsigned short tempBuf[5] = {1,2,3,4,5};
+					retVal = copy_to_user(tempBuf, RdBufDat.buf, sizeof(tempBuf));
+					printk("copy_to user 0x%lx->0x%lx %d bytes, retVal=%d\n", 
+						(unsigned long) tempBuf, 
+						(unsigned long) RdBufDat.buf, 
+						sizeof(tempBuf),
+						retVal
+						);
+					return retVal;							
+				}								
+									
+				//return PrvReadData(Ch0, &RdBufDat);
 			}
 			return 0;
 
