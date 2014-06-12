@@ -285,20 +285,6 @@
 #define ADC_NAP                             ADC_NAP_
 #define ADC_SLEEP                           ADC_SLEEP_
 
-// ADC Channel select
-#define Ch0													0                                                                     
-#define Ch1											    1
-#define Ch2											    2                                                                     
-#define Ch3											    3                                                                     
-#define Ch4											    4                                                                     
-#define Ch5											    5                                                                     
-#define Ch6											    6                                                                     
-#define Ch7											    7                                                                     
-#define Ch01										    8                                                                     
-#define Ch23										    9                                                                     
-#define Ch45										    10                                                                     
-#define Ch67										    11                                                                     
-#define ChMax			                  Ch67                                                   
 
 #define ReadCntStart								0		// Used for discarding first sample
 #define ISRCounterReset							1		// Every 10us
@@ -319,21 +305,6 @@ typedef struct {
 } ChData;
 
 
-#define ChSampleSize 170				// Makes a 4096 page
-typedef struct {
-	unsigned short	Ch0Buf[ChSampleSize];				
-	unsigned short	Ch1Buf[ChSampleSize];				
-	unsigned short	Ch2Buf[ChSampleSize];				
-	unsigned short	Ch3Buf[ChSampleSize];				
-	unsigned short	Ch4Buf[ChSampleSize];				
-	unsigned short	Ch5Buf[ChSampleSize];				
-	unsigned short	Ch6Buf[ChSampleSize];				
-	unsigned short	Ch7Buf[ChSampleSize];				
-	unsigned short	Ch01Buf[ChSampleSize];				
-	unsigned short	Ch23Buf[ChSampleSize];				
-	unsigned short	Ch45Buf[ChSampleSize];				
-	unsigned short	Ch67Buf[ChSampleSize];				
-} BufData;
 
 typedef struct {
 	unsigned char	IsOn;						// 1=IRQ is on, 0=IRQ is off

@@ -86,6 +86,12 @@ unsigned int 	gTimerReloadValue;
 
 
 // ------------------------------------------------------------------
+// TODO List:
+// - ensure concurrency of variables changed in ISR is not broken, numSamples particularly
+// ------------------------------------------------------------------
+
+
+// ------------------------------------------------------------------
 // Private routines
 // ------------------------------------------------------------------
 // Function for sending data out via SPI master, returns the contents in the receive register after sending
@@ -186,182 +192,301 @@ static void PrvStopTimer(void)
   writel(TimerControl, S3C2410_TCON);
 }
 
+static void PrvLTC185xInit(void)
+{
+	printk("LTC185x: Init++\n");
+	
+	// Turn off the SPI clock
+	CLKCON &= ~(S3C2410_CLKCON_SPI);
+	
+	// Turn off the MZIO 5V
+	s3c2410_gpio_setpin(MZIO_5V_ENn, 1);
+	
+	// Setup GPIO
+	// Setup PortJ
+	writel(bGPCON_CAM_init,S3C2440_GPJCON);
+	writel(bGPDAT_CAM_init,S3C2440_GPJDAT);
+	writel(bGPUP_CAM_init,S3C2440_GPJUP);
+	
+	// Setup SPI lines as dedicated
+	s3c2410_gpio_cfgpin(SPI_MISO, S3C2410_GPIO_SFN2);			
+	s3c2410_gpio_cfgpin(SPI_MOSI	, S3C2410_GPIO_SFN2);			
+	s3c2410_gpio_cfgpin(SPI_CLK	, S3C2410_GPIO_SFN2);	
+	
+	// SPI clock turn on
+	CLKCON |= S3C2410_CLKCON_SPI;
+	
+	// Power up the 5V, to power the CLIM
+	s3c2410_gpio_setpin(MZIO_5V_ENn, 0);
+	
+	// Setup SPICON0 register
+	// Polling mode, CLK enabled, Master, pol=pha=0, no garbage mode
+	SPCON = bSPCONx_SMOD_Polling|bSPCONx_ENSCK|bSPCONx_MSTR;
+	
+	// Set prescaler value,
+	// Note: LTC185x only supports up to 20MHz tops, closest configuration with PCLK=50MHz, is for 12.5MHz.  baud=PCLK/2/(prescaler+1)
+	SPPRE=1;
+	
+	printk("LTC185x: Init--\n");	
+}
 
-static int PrvReadData(int ch, ReadBufferData* RdBufDat)
+
+static void PrvLTC185xDeinit(void)
+{
+	printk("LTC185x: Deinit++\n");
+
+	// Stop the timer
+	PrvStopTimer();
+
+	// Turn off the SPI clock
+	CLKCON &= ~(S3C2410_CLKCON_SPI);
+
+	// Set 5V to enabled once again
+	s3c2410_gpio_setpin(MZIO_5V_ENn, 0);
+
+	// Deinit the SPI registers
+	SPCON = 0;
+
+  // Setup PortJ
+	writel(bGPCON_CAM_init,S3C2440_GPJCON);
+	writel(bGPDAT_CAM_init,S3C2440_GPJDAT);
+	writel(bGPUP_CAM_init, S3C2440_GPJUP);
+
+	// Turn off the MZIO 5V
+	s3c2410_gpio_setpin(MZIO_5V_ENn, 1);
+
+	// Set SPI lines as output low
+	s3c2410_gpio_cfgpin(SPI_MISO, S3C2410_GPIO_OUTPUT);			
+	s3c2410_gpio_cfgpin(SPI_MOSI	, S3C2410_GPIO_OUTPUT);			
+	s3c2410_gpio_cfgpin(SPI_CLK	, S3C2410_GPIO_OUTPUT);	
+			
+	s3c2410_gpio_setpin(SPI_MISO, 0);
+	s3c2410_gpio_setpin(SPI_MOSI	, 0);
+	s3c2410_gpio_setpin(SPI_CLK	, 0);
+	
+	printk("LTC185x: Deinit--\n");	
+}
+
+static void PrvSetChannelPeriod(int Ch, unsigned long samplePeriod)
+{
+	gLTC185x.ChData[Ch].trig 	= 	samplePeriod / Timer1uSDivideRatio;
+	gLTC185x.ChData[Ch].count = 	gLTC185x.ChData[Ch].trig;
+	
+	printk("LTC185x: CH0SE_SET_PERIOD .count=%ld .trig=%ld\n", 
+		gLTC185x.ChData[Ch].count,
+		gLTC185x.ChData[Ch].trig);	
+}
+
+static void PrvSetupChannel(int Ch, unsigned long config)
+{
+	unsigned long offset;
+	
+	gLTC185x.ChData[Ch].enabled 			= 	(config && LTC185x_ChSetup_Enabled);
+	gLTC185x.ChData[Ch].control 			= 	0;
+	gLTC185x.ChData[Ch].control 			|=	(config & 0xFF) | ADC_SINGLE_ENDED_INPUT0;
+	
+	offset = (Ch * ChSampleSize);
+	gLTC185x.ChData[Ch].bufferStart  	= (unsigned short*) gLTC185x.Buf + offset;
+	gLTC185x.ChData[Ch].wrP 					= gLTC185x.ChData[Ch].bufferStart;
+	gLTC185x.ChData[Ch].rdP 					= gLTC185x.ChData[Ch].wrP;
+	gLTC185x.ChData[Ch].bufferSize		= ChSampleSize;
+	gLTC185x.ChData[Ch].bufferEnd			= gLTC185x.ChData[Ch].bufferStart + gLTC185x.ChData[Ch].bufferSize;
+	
+	printk("LTC185x: Ch%dSE_SETUP config=0x%lx enabled=%d .control=0x%x\n   buf={0x%lx 0x%lx} sz=%d samples\n",
+		Ch,
+		config, 
+		gLTC185x.ChData[Ch].enabled, 
+		gLTC185x.ChData[Ch].control,
+		(unsigned long) gLTC185x.ChData[Ch].bufferStart,
+		(unsigned long) gLTC185x.ChData[Ch].bufferEnd,
+		gLTC185x.ChData[Ch].bufferSize
+		);
+}
+
+static int PrvReadData(unsigned int arg)
 {
 	unsigned int 		numSamplesToRead;				
 	unsigned int 		remainSamples;
 	unsigned long		numBytes;
 	unsigned long		retVal;
+	ReadBufferData 	RdBufDat;
 
-	printk("PrvReadData\n");
+	// Get data from user space
+	if (copy_from_user(&RdBufDat, (void __user*)arg, sizeof(ReadBufferData))) return -EFAULT;							
+
+	printk("PrvReadData rdP=0x%lx\n", (unsigned long) gLTC185x.ChData[RdBufDat.ch].rdP);
 
 	// Check for an overun, set the user space variable to indicate this
-	if (gLTC185x.ChData[ch].numSamples > ChSampleSize)
+	if (gLTC185x.ChData[RdBufDat.ch].numSamples > ChSampleSize)
 	{
 		printk("Overun detected!!\n");
 
-		if (RdBufDat->overun)
-			if (put_user(1, RdBufDat->overun)) return -EFAULT;
+		if (RdBufDat.overun)
+			if (put_user(1, RdBufDat.overun)) return -EFAULT;
 	}
 
 	// If read and write pointers are equal no new data has come, return 0
-	if (gLTC185x.ChData[ch].rdP == gLTC185x.ChData[ch].wrP) 
+	if (gLTC185x.ChData[RdBufDat.ch].rdP == gLTC185x.ChData[RdBufDat.ch].wrP) 
 	{
 		printk("No data\n");
 		return 0;
 	}
 
 	// Check if write pointer has wrapped around, read pointer will then be ahead
-	if (gLTC185x.ChData[ch].rdP > gLTC185x.ChData[ch].wrP) 
+	if (gLTC185x.ChData[RdBufDat.ch].rdP > gLTC185x.ChData[RdBufDat.ch].wrP) 
 	{						
 		// Write pointer has wrapped around
-		numSamplesToRead = gLTC185x.ChData[ch].bufferEnd - gLTC185x.ChData[ch].rdP;												
-		remainSamples = gLTC185x.ChData[ch].wrP - gLTC185x.ChData[ch].bufferStart;	
+		numSamplesToRead = gLTC185x.ChData[RdBufDat.ch].bufferEnd - gLTC185x.ChData[RdBufDat.ch].rdP;												
+		remainSamples = gLTC185x.ChData[RdBufDat.ch].wrP - gLTC185x.ChData[RdBufDat.ch].bufferStart;	
 
 		printk("rdP>wrP numSamplesToRead=%d remainSamples=%d userBuf=0x%lx samplesRequested=%d\n", 
 			numSamplesToRead, 
 			remainSamples, 
-			(unsigned long) RdBufDat->buf,
-			RdBufDat->numSamples
+			(unsigned long) RdBufDat.buf,
+			RdBufDat.numSamples
 			);
 
 		// If there is no user buffer, return the number of samples available
-		if (!RdBufDat->buf) 
+		if (!RdBufDat.buf) 
 			return (numSamplesToRead + remainSamples);
 
 		// Check how many bytes to transfer
-		if ((numSamplesToRead + remainSamples) < RdBufDat->numSamples)
+		if ((numSamplesToRead + remainSamples) < RdBufDat.numSamples)
 		{
 			printk("... ALL\n");
 
 			// Transfer all the samples
 			// Copy to user buf
 			numBytes = numSamplesToRead * sampleSize;
-			if (copy_to_user(gLTC185x.ChData[ch].rdP, &RdBufDat->buf[0], numBytes)) 
+			if (copy_to_user(RdBufDat.buf ,gLTC185x.ChData[RdBufDat.ch].rdP, numBytes)) 
 				return -EFAULT;							
 
 			// Decrement the sample count
-			gLTC185x.ChData[ch].numSamples -= numSamplesToRead;
+			gLTC185x.ChData[RdBufDat.ch].numSamples -= numSamplesToRead;
 									
 			// Copy remainder to user buf
 			numBytes = remainSamples * sampleSize;
-			if (copy_to_user(gLTC185x.ChData[ch].bufferStart, &RdBufDat->buf[numSamplesToRead], numBytes)) 
+			if (copy_to_user(&RdBufDat.buf[numSamplesToRead],gLTC185x.ChData[RdBufDat.ch].bufferStart, numBytes)) 
 				return -EFAULT;							
 
 			// Decrement the sample count
-			gLTC185x.ChData[ch].numSamples -= remainSamples;
+			gLTC185x.ChData[RdBufDat.ch].numSamples -= remainSamples;
 										
 			// Update read pointer
-			gLTC185x.ChData[ch].rdP = gLTC185x.ChData[ch].bufferStart + numBytes;
+			gLTC185x.ChData[RdBufDat.ch].rdP = &gLTC185x.ChData[RdBufDat.ch].bufferStart[remainSamples];
 
-			printk("rdP=0x%lx\n", (unsigned long) gLTC185x.ChData[ch].rdP);
+			printk("rdP=0x%lx %d bytes transferred\n", 
+				(unsigned long) gLTC185x.ChData[RdBufDat.ch].rdP,
+				(numSamplesToRead + remainSamples) * sampleSize
+				);		
 
 		}
 		else
 		{					
-			printk("... PART\n");
+			printk("... PART ");
 	
 			// Copy a portion of the sample data
-			if (numSamplesToRead < RdBufDat->numSamples)
+			if (numSamplesToRead < RdBufDat.numSamples)
 			{
-				printk("... TOP\n");
+				printk("TOP\n");
 
 				// Copy to user buf
 				numBytes = numSamplesToRead * sampleSize;
-				if (copy_to_user(gLTC185x.ChData[ch].rdP, &RdBufDat->buf[0], numBytes)) 
+				if (copy_to_user(RdBufDat.buf, gLTC185x.ChData[RdBufDat.ch].rdP, numBytes)) 
 					return -EFAULT;							
 
 				// Decrement the sample count
-				gLTC185x.ChData[ch].numSamples -= numSamplesToRead;
+				gLTC185x.ChData[RdBufDat.ch].numSamples -= numSamplesToRead;
 				
 				// Calculate the remaining samples to transfer
-				remainSamples = RdBufDat->numSamples - numSamplesToRead;
+				remainSamples = RdBufDat.numSamples - numSamplesToRead;
 
-				printk("... BOTTOM\n");
+				printk("BOTTOM\n");
 
 				// Copy remainder to user buf
 				numBytes = remainSamples * sampleSize;
-				if (copy_to_user(gLTC185x.ChData[ch].bufferStart, &RdBufDat->buf[numSamplesToRead], numBytes)) 
+				if (copy_to_user(&RdBufDat.buf[numSamplesToRead], gLTC185x.ChData[RdBufDat.ch].bufferStart, numBytes)) 
 					return -EFAULT;							
 
 				// Decrement the sample count
-				gLTC185x.ChData[ch].numSamples -= remainSamples;
+				gLTC185x.ChData[RdBufDat.ch].numSamples -= remainSamples;
 
 				// Update read pointer
-				gLTC185x.ChData[ch].rdP = &gLTC185x.ChData[ch].bufferStart[remainSamples];
+				gLTC185x.ChData[RdBufDat.ch].rdP = &gLTC185x.ChData[RdBufDat.ch].bufferStart[remainSamples];
 
-				printk("rdP=0x%lx\n", (unsigned long) gLTC185x.ChData[ch].rdP);		
+				printk("rdP=0x%lx %d bytes transferred\n", 
+					(unsigned long) gLTC185x.ChData[RdBufDat.ch].rdP,
+					(numSamplesToRead + remainSamples) * sampleSize
+					);		
 			}
 			else
 			{
 				printk("... TOP ONLY\n");
 
 				// Only read the number of samples requested
-				numSamplesToRead = RdBufDat->numSamples;
+				numSamplesToRead = RdBufDat.numSamples;
 
 				// Copy to user buf
 				numBytes = numSamplesToRead * sampleSize;
-				if (copy_to_user(gLTC185x.ChData[ch].rdP, &RdBufDat->buf[0], numBytes)) 
+				if (copy_to_user(&RdBufDat.buf[0], gLTC185x.ChData[RdBufDat.ch].rdP, numBytes)) 
 					return -EFAULT;							
 
 				// Decrement the sample count
-				gLTC185x.ChData[ch].numSamples -= numSamplesToRead;
+				gLTC185x.ChData[RdBufDat.ch].numSamples -= numSamplesToRead;
 
 				// Update read pointer
-				gLTC185x.ChData[ch].rdP += numSamplesToRead * sampleSize;
+				gLTC185x.ChData[RdBufDat.ch].rdP += numSamplesToRead * sampleSize;
 
-				printk("rdP=0x%lx\n", (unsigned long) gLTC185x.ChData[ch].rdP);		
+				printk("rdP=0x%lx %d bytes transferred\n", 
+					(unsigned long) gLTC185x.ChData[RdBufDat.ch].rdP,
+					(numSamplesToRead + remainSamples) * sampleSize
+					);		
 			}
 		}
 	} 
 	else // gLTC185x.ChData[ch].rdP < gLTC185x.ChData[ch].wrP)
 	{
-		numSamplesToRead = gLTC185x.ChData[ch].wrP - gLTC185x.ChData[ch].rdP;
+		numSamplesToRead = gLTC185x.ChData[RdBufDat.ch].numSamples;
 
 		printk("rdP<wrP numSamplesToRead=%d userBuf=0x%lx\n", 
 			numSamplesToRead, 
-			(unsigned long) RdBufDat->buf);
-		
+			(unsigned long) RdBufDat.buf);
+
 		// If there is no user buffer, return the number of samples available
-		if (!RdBufDat->buf) 
+		if (!RdBufDat.buf) 
 		{
 			printk("No buffer!\n");
 			return numSamplesToRead;
 		}
 
 		// Check to see how many samples to return
-		if (numSamplesToRead > RdBufDat->numSamples)
-			numSamplesToRead = RdBufDat->numSamples;
+		if (numSamplesToRead > RdBufDat.numSamples)
+			numSamplesToRead = RdBufDat.numSamples;
 
 		numBytes = numSamplesToRead * sampleSize;
-		if (access_ok(VERIFY_WRITE, RdBufDat->buf, numBytes))
+		retVal = copy_to_user(RdBufDat.buf, gLTC185x.ChData[RdBufDat.ch].rdP, numBytes);
+		if (retVal) 
 		{
-			retVal = copy_to_user(gLTC185x.ChData[ch].rdP, RdBufDat->buf, numBytes);
-			if (retVal) 
-			{
-				printk("Copy to user failed 0x%lx->0x%lx %ld bytes, retVal=%ld\n", 
-					(unsigned long) gLTC185x.ChData[ch].rdP, 
-					(unsigned long) RdBufDat->buf, 
-					numBytes,
-					retVal
-					);
-								
-				return -EFAULT;							
-			}
-		}
-		else
-		{
-			printk("Can't write to user buf 0x%lx\n", (unsigned long) RdBufDat->buf); 			
+			printk("Copy to user failed 0x%lx->0x%lx %ld bytes, retVal=%ld\n", 
+				(unsigned long) gLTC185x.ChData[RdBufDat.ch].rdP, 
+				(unsigned long) RdBufDat.buf, 
+				numBytes,
+				retVal
+				);
+							
+			return -EFAULT;							
 		}
 				
 		// Decrement the sample count
-		gLTC185x.ChData[ch].numSamples -= (numSamplesToRead);
+		gLTC185x.ChData[RdBufDat.ch].numSamples -= (numSamplesToRead);
 
 		// Update read pointer
-		gLTC185x.ChData[ch].rdP += numBytes;
+		gLTC185x.ChData[RdBufDat.ch].rdP += numSamplesToRead;
 
-		printk("   rdP=0x%lx\n", (unsigned long) gLTC185x.ChData[ch].rdP);		
+		printk("   rdP=0x%lx %ld bytes transferred\n", 
+			(unsigned long) gLTC185x.ChData[RdBufDat.ch].rdP, 
+			numBytes
+		);		
 	}
 	
 	return 0;	
@@ -406,7 +531,7 @@ static int PrvReadData(int ch, ReadBufferData* RdBufDat)
 //				printk("error writing numSamples\n");					
 //			}
 //
-//			if (copy_to_user(gLTC185x.ChData[Ch0].numSamplesP, &numSamples, sizeof(numSamples)))
+//			if (copy_to_user(&numSamples, gLTC185x.ChData[Ch0].numSamplesP, sizeof(numSamples)))
 //			{
 //				printk("error copy_to_user\n");											
 //			}
@@ -451,7 +576,7 @@ static irqreturn_t TimerINTHandler(int irq,void *TimDev)
 	gLTC185x.InIRQ = 1;
 
 	// Check and update ISR counter
-	loopCount = ChMax;
+	loopCount = ChnMax;
 	Ch = gLTC185x.wrCh;	
 	takeReading = 0;
 	triggered = 0;
@@ -459,7 +584,7 @@ static irqreturn_t TimerINTHandler(int irq,void *TimDev)
 	{			
 		// Increment and wrap around the channel counter
 		Ch++;
-		if (Ch>ChMax) Ch=0;
+		if (Ch>ChnMax) Ch=0;
 			
 		if (gLTC185x.ChData[Ch].enabled) {
 			if (gLTC185x.ChData[Ch].trig) {
@@ -596,19 +721,23 @@ static irqreturn_t TimerINTHandler(int irq,void *TimDev)
 
 //		tasklet_schedule(&read_tasklet);
 
-		// Record the sample in the appropriate buffer
-		printk("takeReading wrP 0x%lx %x numsam=%d\n", 
-			(unsigned long) gLTC185x.ChData[gLTC185x.rdCh].wrP, 
-			sampleValue, 
-			gLTC185x.ChData[gLTC185x.rdCh].numSamples
-			);
 
 		*gLTC185x.ChData[gLTC185x.rdCh].wrP++ = sampleValue;
 		gLTC185x.ChData[gLTC185x.rdCh].numSamples++;
 
+		// Record the sample in the appropriate buffer
+		printk("wrP(0x%lx)=0x%x, %d samples\n", 
+			(unsigned long) gLTC185x.ChData[gLTC185x.rdCh].wrP, 
+			*(gLTC185x.ChData[gLTC185x.rdCh].wrP-sampleSize), 
+			gLTC185x.ChData[gLTC185x.rdCh].numSamples
+			);
+
 		// Wrap around if necessary
 		if (gLTC185x.ChData[gLTC185x.rdCh].wrP >= gLTC185x.ChData[gLTC185x.rdCh].bufferEnd)
+		{
+			printk("wrP wrapped\n"); 			
 			gLTC185x.ChData[gLTC185x.rdCh].wrP = gLTC185x.ChData[gLTC185x.rdCh].bufferStart;
+		}
 	}
 	
 exit:
@@ -642,6 +771,8 @@ static int sbc2440_mzio_LTC185x_ioctl(
 	// Are we turned on already?
 	if (gLTC185x.IsOn)
 	{
+		// If sampling is turned on, only allow access to STOP and READ
+
 		if (cmd == MZIO_LTC185x_STOP)
 		{
 				printk("LTC185x: Stop++\n");
@@ -658,7 +789,8 @@ static int sbc2440_mzio_LTC185x_ioctl(
 				printk("LTC185x: Stop--\n");
 				return 0;
 		}
-		if (!MZIO_LTC185x_CH0SE_READ_BUFFER) 
+		
+		if (!MZIO_LTC185x_READ_BUFFER) 
 			return -EFAULT;
 	}
 
@@ -668,75 +800,11 @@ static int sbc2440_mzio_LTC185x_ioctl(
 		// Init routines
 		// -----------------------------------------------------
 		case MZIO_LTC185x_INIT:
-			printk("LTC185x: Init++\n");
-
-			// Turn off the SPI clock
-			CLKCON &= ~(S3C2410_CLKCON_SPI);
-
-			// Turn off the MZIO 5V
-			s3c2410_gpio_setpin(MZIO_5V_ENn, 1);
-
-			// Setup GPIO
-		  // Setup PortJ
-			writel(bGPCON_CAM_init,S3C2440_GPJCON);
-			writel(bGPDAT_CAM_init,S3C2440_GPJDAT);
-			writel(bGPUP_CAM_init,S3C2440_GPJUP);
-
-			// Setup SPI lines as dedicated
-			s3c2410_gpio_cfgpin(SPI_MISO, S3C2410_GPIO_SFN2);			
-			s3c2410_gpio_cfgpin(SPI_MOSI	, S3C2410_GPIO_SFN2);			
-			s3c2410_gpio_cfgpin(SPI_CLK	, S3C2410_GPIO_SFN2);	
-
-			// SPI clock turn on
-			CLKCON |= S3C2410_CLKCON_SPI;
-
-			// Power up the 5V, to power the CLIM
-			s3c2410_gpio_setpin(MZIO_5V_ENn, 0);
-
-			// Setup SPICON0 register
-			// Polling mode, CLK enabled, Master, pol=pha=0, no garbage mode
-			SPCON = bSPCONx_SMOD_Polling|bSPCONx_ENSCK|bSPCONx_MSTR;
-
-			// Set prescaler value,
-			// Note: LTC185x only supports up to 20MHz tops, closest configuration with PCLK=50MHz, is for 12.5MHz.  baud=PCLK/2/(prescaler+1)
-			SPPRE=1;
-			
-			printk("LTC185x: Init--\n");
+			PrvLTC185xInit();
 			return 0;
 
 		case MZIO_LTC185x_DEINIT:
-			printk("LTC185x: Deinit++\n");
-	
-			// Stop the timer
-			PrvStopTimer();
-
-			// Turn off the SPI clock
-			CLKCON &= ~(S3C2410_CLKCON_SPI);
-
-			// Set 5V to enabled once again
-			s3c2410_gpio_setpin(MZIO_5V_ENn, 0);
-
-			// Deinit the SPI registers
-			SPCON = 0;
-
-		  // Setup PortJ
-			writel(bGPCON_CAM_init,S3C2440_GPJCON);
-			writel(bGPDAT_CAM_init,S3C2440_GPJDAT);
-			writel(bGPUP_CAM_init, S3C2440_GPJUP);
-
-			// Turn off the MZIO 5V
-			s3c2410_gpio_setpin(MZIO_5V_ENn, 1);
-
-			// Set SPI lines as output low
-			s3c2410_gpio_cfgpin(SPI_MISO, S3C2410_GPIO_OUTPUT);			
-			s3c2410_gpio_cfgpin(SPI_MOSI	, S3C2410_GPIO_OUTPUT);			
-			s3c2410_gpio_cfgpin(SPI_CLK	, S3C2410_GPIO_OUTPUT);	
-					
-			s3c2410_gpio_setpin(SPI_MISO, 0);
-			s3c2410_gpio_setpin(SPI_MOSI	, 0);
-			s3c2410_gpio_setpin(SPI_CLK	, 0);
-			
-			printk("LTC185x: Deinit--\n");
+			PrvLTC185xDeinit();
 			return 0;
 
 		// -----------------------------------------------------
@@ -746,7 +814,7 @@ static int sbc2440_mzio_LTC185x_ioctl(
 			printk("LTC185x: Start++\n");
 	
 			// Allocate start values
-			gLTC185x.wrCh			=	ChMax;
+			gLTC185x.wrCh			=	ChnMax;
 			gLTC185x.readCnt	=	ReadCntStart;
 			gLTC185x.skipRead	=	1;
 			gIntCount1000ms 	= Timer1000ms*5;
@@ -755,199 +823,124 @@ static int sbc2440_mzio_LTC185x_ioctl(
 			// Zero the sample buffer
 			memset(gLTC185x.Buf, 0, sizeof(BufData));
 
-//			PrvStartTimer();
+			PrvStartTimer();
 			
 			printk("LTC185x: Start--\n");
 			return 0;	
+
+
+		// -----------------------------------------------------
+		// ADC read buffer
+		// -----------------------------------------------------
+		case MZIO_LTC185x_READ_BUFFER:
+			return PrvReadData(arg);
 
 		// -----------------------------------------------------
 		// ADC Channel setup routines
 		// -----------------------------------------------------
 		case MZIO_LTC185x_CH0SE_SETUP:	
-			gLTC185x.ChData[Ch0].enabled = 	(arg && LTC185x_ChSetup_Enabled);
-			gLTC185x.ChData[Ch0].control = 	0;
-			gLTC185x.ChData[Ch0].control |=	(arg & 0xFF) | ADC_SINGLE_ENDED_INPUT0;
-
-			gLTC185x.ChData[Ch0].bufferStart  = gLTC185x.Buf->Ch0Buf;
-			gLTC185x.ChData[Ch0].wrP 					= gLTC185x.ChData[Ch0].bufferStart;
-			gLTC185x.ChData[Ch0].rdP 					= gLTC185x.ChData[Ch0].wrP;
-			gLTC185x.ChData[Ch0].bufferSize		= ChSampleSize * sampleSize;
-			gLTC185x.ChData[Ch0].bufferEnd		= gLTC185x.ChData[Ch0].bufferStart + gLTC185x.ChData[Ch0].bufferSize;
-			
-			printk("LTC185x: CH0SE_SETUP arg=0x%lx enabled=%d .control=0x%x buf={0x%lx 0x%lx} sz=%d bytes\n",
-				arg, 
-				gLTC185x.ChData[Ch0].enabled, 
-				gLTC185x.ChData[Ch0].control,
-				(unsigned long) gLTC185x.ChData[Ch0].bufferStart,
-				(unsigned long) gLTC185x.ChData[Ch0].bufferEnd,
-				gLTC185x.ChData[Ch0].bufferSize
-				);
+			PrvSetupChannel(Chn0, arg);
 			return 0;
 
 		case MZIO_LTC185x_CH0SE_SET_PERIOD:
-			gLTC185x.ChData[Ch0].trig 	= 	arg / Timer1uSDivideRatio;
-			gLTC185x.ChData[Ch0].count 	= 	gLTC185x.ChData[Ch0].trig;
-			printk("LTC185x: CH0SE_SET_PERIOD .count=%ld .trig=%ld\n", 
-				gLTC185x.ChData[Ch0].count,
-				gLTC185x.ChData[Ch0].trig);
+			PrvSetChannelPeriod(Chn0, arg);
 			return 0;
-
-		case MZIO_LTC185x_CH0SE_READ_BUFFER:
-			{
-				// Get data from user space
-				ReadBufferData 	RdBufDat;
-
-				printk("CH0SE_READ_BUFFER\n");
-				if (copy_from_user(&RdBufDat, (void __user*)arg, sizeof(ReadBufferData))) return -EFAULT;							
-					
-				{
-					int retVal;
-					unsigned short tempBuf[5] = {1,2,3,4,5};
-					retVal = copy_to_user(tempBuf, RdBufDat.buf, sizeof(tempBuf));
-					printk("copy_to user 0x%lx->0x%lx %d bytes, retVal=%d\n", 
-						(unsigned long) tempBuf, 
-						(unsigned long) RdBufDat.buf, 
-						sizeof(tempBuf),
-						retVal
-						);
-					return retVal;							
-				}								
-									
-				//return PrvReadData(Ch0, &RdBufDat);
-			}
-			return 0;
-
 
 		// -----------------------------------------------------
 		case MZIO_LTC185x_CH1SE_SETUP:	
-			gLTC185x.ChData[Ch1].enabled = 	(arg && LTC185x_ChSetup_Enabled);
-			gLTC185x.ChData[Ch1].control = 	0;
-			gLTC185x.ChData[Ch1].control |=	(arg & 0xFF) | ADC_SINGLE_ENDED_INPUT1;
+			PrvSetupChannel(Chn1, arg);
 			return 0;
 
 		case MZIO_LTC185x_CH1SE_SET_PERIOD:	
-			gLTC185x.ChData[Ch1].trig 	= 	arg / Timer1uSDivideRatio;
-			gLTC185x.ChData[Ch1].count 	= 	gLTC185x.ChData[Ch0].trig;
+			PrvSetChannelPeriod(Chn1, arg);
 			return 0;
 
 		// -----------------------------------------------------
 		case MZIO_LTC185x_CH2SE_SETUP:	
-			gLTC185x.ChData[Ch2].enabled = 	(arg && LTC185x_ChSetup_Enabled);
-			gLTC185x.ChData[Ch2].control = 	0;
-			gLTC185x.ChData[Ch2].control |=	(arg & 0xFF) | ADC_SINGLE_ENDED_INPUT2;
+			PrvSetupChannel(Chn2, arg);
 			return 0;
 
 		case MZIO_LTC185x_CH2SE_SET_PERIOD:	
-			gLTC185x.ChData[Ch2].trig 	= 	arg / Timer1uSDivideRatio;
-			gLTC185x.ChData[Ch2].count 	= 	gLTC185x.ChData[Ch0].trig;
+			PrvSetChannelPeriod(Chn2, arg);
 			return 0;
 
 		// -----------------------------------------------------
 		case MZIO_LTC185x_CH3SE_SETUP:	
-			gLTC185x.ChData[Ch3].enabled = 	(arg && LTC185x_ChSetup_Enabled);
-			gLTC185x.ChData[Ch3].control = 	arg;
-			gLTC185x.ChData[Ch3].control |=	(arg & 0xFF) | ADC_SINGLE_ENDED_INPUT3;
+			PrvSetupChannel(Chn3, arg);
 			return 0;
 
 		case MZIO_LTC185x_CH3SE_SET_PERIOD:	
-			gLTC185x.ChData[Ch3].trig 	= 	arg / Timer1uSDivideRatio;
-			gLTC185x.ChData[Ch3].count 	= 	gLTC185x.ChData[Ch0].trig;
+			PrvSetChannelPeriod(Chn3, arg);
 			return 0;
 
 		// -----------------------------------------------------
 		case MZIO_LTC185x_CH4SE_SETUP:	
-			gLTC185x.ChData[Ch4].enabled = 	(arg && LTC185x_ChSetup_Enabled);
-			gLTC185x.ChData[Ch4].control = 	arg;
-			gLTC185x.ChData[Ch4].control |=	(arg & 0xFF) | ADC_SINGLE_ENDED_INPUT4;
+			PrvSetupChannel(Chn4, arg);
 			return 0;
 
 		case MZIO_LTC185x_CH4SE_SET_PERIOD:	
-			gLTC185x.ChData[Ch4].trig 	= 	arg / Timer1uSDivideRatio;
-			gLTC185x.ChData[Ch4].count 	= 	gLTC185x.ChData[Ch0].trig;
-			return 0;
+			PrvSetChannelPeriod(Chn4, arg);
 
 		// -----------------------------------------------------
 		case MZIO_LTC185x_CH5SE_SETUP:	
-			gLTC185x.ChData[Ch5].enabled = 	(arg && LTC185x_ChSetup_Enabled);
-			gLTC185x.ChData[Ch5].control = 	arg;
-			gLTC185x.ChData[Ch5].control |=	(arg & 0xFF) | ADC_SINGLE_ENDED_INPUT5;
+			PrvSetupChannel(Chn5, arg);
 			return 0;
 
 		case MZIO_LTC185x_CH5SE_SET_PERIOD:
-			gLTC185x.ChData[Ch5].trig 	= 	arg / Timer1uSDivideRatio;
-			gLTC185x.ChData[Ch5].count 	= 	gLTC185x.ChData[Ch0].trig;
+			PrvSetChannelPeriod(Chn5, arg);
 			return 0;
 
 		// -----------------------------------------------------
 		case MZIO_LTC185x_CH6SE_SETUP:	
-			gLTC185x.ChData[Ch6].enabled = 	(arg && LTC185x_ChSetup_Enabled);
-			gLTC185x.ChData[Ch6].control = 	arg;
-			gLTC185x.ChData[Ch6].control |=	(arg & 0xFF) | ADC_SINGLE_ENDED_INPUT6;
+			PrvSetupChannel(Chn6, arg);
 			return 0;
 
 		case MZIO_LTC185x_CH6SE_SET_PERIOD:	
-			gLTC185x.ChData[Ch6].trig 	= 	arg / Timer1uSDivideRatio;
-			gLTC185x.ChData[Ch6].count 	= 	gLTC185x.ChData[Ch0].trig;
-			return 0;
+			PrvSetChannelPeriod(Chn6, arg);
 
 		// -----------------------------------------------------
 		case MZIO_LTC185x_CH7SE_SETUP:	
-			gLTC185x.ChData[Ch7].enabled = 	(arg && LTC185x_ChSetup_Enabled);
-			gLTC185x.ChData[Ch7].control = 	0;
-			gLTC185x.ChData[Ch7].control |=	(arg & 0xFF) | ADC_SINGLE_ENDED_INPUT7;
+			PrvSetupChannel(Chn7, arg);
 			return 0;
 
 		case MZIO_LTC185x_CH7SE_SET_PERIOD:	
-			gLTC185x.ChData[Ch7].trig 	= 	arg / Timer1uSDivideRatio;
-			gLTC185x.ChData[Ch7].count 	= 	gLTC185x.ChData[Ch0].trig;
+			PrvSetChannelPeriod(Chn7, arg);
 			return 0;
 
 		// -----------------------------------------------------
 		case MZIO_LTC185x_CH01DE_SETUP:	
-			gLTC185x.ChData[Ch01].enabled = 	(arg && LTC185x_ChSetup_Enabled);
-			gLTC185x.ChData[Ch01].control = 	arg;
-			gLTC185x.ChData[Ch01].control |=	(arg & 0xFF) | ADC_SINGLE_ENDED_INPUT01;
+			PrvSetupChannel(Chn01, arg);
 			return 0;
 
-		case MZIO_LTC185x_CH01SE_SET_PERIOD:	
-			gLTC185x.ChData[Ch01].trig 	= 	arg / Timer1uSDivideRatio;
-			gLTC185x.ChData[Ch01].count 	= 	gLTC185x.ChData[Ch0].trig;
+		case MZIO_LTC185x_CH01DE_SET_PERIOD:	
+			PrvSetChannelPeriod(Chn01, arg);
 			return 0;
 
 		// -----------------------------------------------------
 		case MZIO_LTC185x_CH23DE_SETUP:	
-			gLTC185x.ChData[Ch23].enabled = 	(arg && LTC185x_ChSetup_Enabled);
-			gLTC185x.ChData[Ch23].control = 	arg;
-			gLTC185x.ChData[Ch23].control |=	(arg & 0xFF) | ADC_SINGLE_ENDED_INPUT23;
+			PrvSetupChannel(Chn23, arg);
 			return 0;
 
-		case MZIO_LTC185x_CH23SE_SET_PERIOD:	
-			gLTC185x.ChData[Ch23].trig 	= 	arg / Timer1uSDivideRatio;
-			gLTC185x.ChData[Ch23].count 	= 	gLTC185x.ChData[Ch0].trig;
+		case MZIO_LTC185x_CH23DE_SET_PERIOD:	
+			PrvSetChannelPeriod(Chn23, arg);
 			return 0;
-
+			
 		// -----------------------------------------------------
 		case MZIO_LTC185x_CH45DE_SETUP:	
-			gLTC185x.ChData[Ch45].enabled = 	(arg && LTC185x_ChSetup_Enabled);
-			gLTC185x.ChData[Ch45].control = 	arg;
-			gLTC185x.ChData[Ch45].control |=	(arg & 0xFF) | ADC_SINGLE_ENDED_INPUT45;
+			PrvSetupChannel(Chn45, arg);
 			return 0;
 
-		case MZIO_LTC185x_CH45SE_SET_PERIOD:	
-			gLTC185x.ChData[Ch45].trig 	= 	arg / Timer1uSDivideRatio;
-			gLTC185x.ChData[Ch45].count 	= 	gLTC185x.ChData[Ch0].trig;
+		case MZIO_LTC185x_CH45DE_SET_PERIOD:	
+			PrvSetChannelPeriod(Chn45, arg);
 			return 0;
 
 		// -----------------------------------------------------
 		case MZIO_LTC185x_CH67DE_SETUP:	
-			gLTC185x.ChData[Ch67].enabled = 	(arg && LTC185x_ChSetup_Enabled);
-			gLTC185x.ChData[Ch67].control = 	arg;
-			gLTC185x.ChData[Ch67].control |=	(arg & 0xFF) | ADC_SINGLE_ENDED_INPUT67;
+			PrvSetupChannel(Chn67, arg);
 			return 0;
 
-		case MZIO_LTC185x_CH67SE_SET_PERIOD:	
-			gLTC185x.ChData[Ch67].trig 	= 	arg / Timer1uSDivideRatio;
-			gLTC185x.ChData[Ch67].count 	= 	gLTC185x.ChData[Ch0].trig;
+		case MZIO_LTC185x_CH67DE_SET_PERIOD:	
+			PrvSetChannelPeriod(Chn67, arg);
 			return 0;
 
 		// -----------------------------------------------------
@@ -1017,37 +1010,6 @@ static int sbc2440_mzio_LTC185x_ioctl(
 			return 0;
 
 		
-		case MZIO_LTC185x_READ:
-			printk("LTC185x: Read to 0x%lx\n", arg);
-			
-			// Wait for data to be ready
-//			wait_eventinterruptible(wq, 0);
-
-//			do_read();
-			
-/*			
-			{
-//				int tempBuf[5] = {1,2,3,4,5};
-				
-//				if (!access_ok(VERIFY_WRITE, (void __user *)arg, 5)) return -EFAULT;
-					
-//				return put_user(SPPRE,	(int *)arg);
-	//			if (copy_to_user((void *)arg, &SPPRE, sizeof(int))) return -EFAULT;
-				
-			}
-*/			
-			return 0;
-
-		case MZIO_LTC185x_SET_READ_FILENAME:
-			// If system is running, return error
-			
-			// Create the file
-			
-			// Create the mmap
-			
-			
-			return 0;
-
 		default:
 			return -EINVAL;
 	}
@@ -1108,6 +1070,10 @@ static int __init dev_init(void)
 		printk("Error allocating memory\n");
 		return -ENOMEM;
 	}
+	printk("Allocate sample buffer %d bytes at 0x%lx\n", 
+		sizeof(BufData), 
+		(unsigned long) gLTC185x.Buf
+		);
 
 
 	base_addr_SPI = ioremap(S3C2410_PA_SPI,0x20);
