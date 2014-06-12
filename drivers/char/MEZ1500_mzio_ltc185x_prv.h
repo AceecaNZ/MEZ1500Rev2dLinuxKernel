@@ -241,26 +241,17 @@
                                             ADC_SELECT1   |\
                                             ADC_SELECT0
 
-#define ADC_SINGLE_ENDED_INPUT01            0
-
-#define ADC_SINGLE_ENDED_INPUT23            ADC_SELECT0
-
-#define ADC_SINGLE_ENDED_INPUT45            ADC_SELECT1   
-                                            
-#define ADC_SINGLE_ENDED_INPUT67	          ADC_SELECT1   |\
-                                            ADC_SELECT0
-
-
 
 // Multiplexer Channel Selection (Differential)
-#define ADC_DIFFERENTIAL_EVEN_INPUT0_1      0
+#define ADC_DIFFERENTIAL_EVEN_INPUT01      0
 
-#define ADC_DIFFERENTIAL_EVEN_INPUT2_3      ADC_SELECT0
+#define ADC_DIFFERENTIAL_EVEN_INPUT23      ADC_SELECT0
 
-#define ADC_DIFFERENTIAL_EVEN_INPUT4_5      ADC_SELECT1
+#define ADC_DIFFERENTIAL_EVEN_INPUT45      ADC_SELECT1
 
-#define ADC_DIFFERENTIAL_EVEN_INPUT6_7      ADC_SELECT1   |\
+#define ADC_DIFFERENTIAL_EVEN_INPUT67      ADC_SELECT1   |\
                                             ADC_SELECT0
+
 
 #define ADC_DIFFERENTIAL_ODD_INPUT0_1       ADC_ODD_SIGN
 

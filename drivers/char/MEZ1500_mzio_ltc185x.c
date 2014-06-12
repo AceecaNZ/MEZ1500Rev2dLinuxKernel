@@ -267,40 +267,94 @@ static void PrvLTC185xDeinit(void)
 	printk("LTC185x: Deinit--\n");	
 }
 
-static void PrvSetChannelPeriod(int Ch, unsigned long samplePeriod)
+static int PrvSetChannelConfig(unsigned int arg)
 {
-	gLTC185x.ChData[Ch].trig 	= 	samplePeriod / Timer1uSDivideRatio;
-	gLTC185x.ChData[Ch].count = 	gLTC185x.ChData[Ch].trig;
-	
-	printk("LTC185x: CH0SE_SET_PERIOD .count=%ld .trig=%ld\n", 
-		gLTC185x.ChData[Ch].count,
-		gLTC185x.ChData[Ch].trig);	
-}
-
-static void PrvSetupChannel(int Ch, unsigned long config)
-{
+	ChConfigData ChConfig;
 	unsigned long offset;
+	unsigned char	chSelection;
 	
-	gLTC185x.ChData[Ch].enabled 			= 	(config && LTC185x_ChSetup_Enabled);
-	gLTC185x.ChData[Ch].control 			= 	0;
-	gLTC185x.ChData[Ch].control 			|=	(config & 0xFF) | ADC_SINGLE_ENDED_INPUT0;
+	// Get data from user space
+	if (copy_from_user(&ChConfig, (void __user*)arg, sizeof(ChConfigData))) return -EFAULT;							
+
+	gLTC185x.ChData[ChConfig.ch].enabled 			= 	(ChConfig.config && LTC185x_ChSetup_Enabled);
+	gLTC185x.ChData[ChConfig.ch].control 			= 	0;
+	gLTC185x.ChData[ChConfig.ch].control 			|=	(ChConfig.config & 0xFF00 >> 8);
 	
-	offset = (Ch * ChSampleSize);
-	gLTC185x.ChData[Ch].bufferStart  	= (unsigned short*) gLTC185x.Buf + offset;
-	gLTC185x.ChData[Ch].wrP 					= gLTC185x.ChData[Ch].bufferStart;
-	gLTC185x.ChData[Ch].rdP 					= gLTC185x.ChData[Ch].wrP;
-	gLTC185x.ChData[Ch].bufferSize		= ChSampleSize;
-	gLTC185x.ChData[Ch].bufferEnd			= gLTC185x.ChData[Ch].bufferStart + gLTC185x.ChData[Ch].bufferSize;
+	switch(ChConfig.ch)
+	{
+		case Chn0:
+			gLTC185x.ChData[ChConfig.ch].control 	|=	ADC_SINGLE_ENDED_INPUT0;
+			break;
+
+		case Chn1:
+			gLTC185x.ChData[ChConfig.ch].control 	|=	ADC_SINGLE_ENDED_INPUT0;
+			break;
+
+		case Chn2:
+			gLTC185x.ChData[ChConfig.ch].control 	|=	ADC_SINGLE_ENDED_INPUT2;
+			break;
+
+		case Chn3:
+			gLTC185x.ChData[ChConfig.ch].control 	|=	ADC_SINGLE_ENDED_INPUT3;
+			break;
+
+		case Chn4:
+			gLTC185x.ChData[ChConfig.ch].control 	|=	ADC_SINGLE_ENDED_INPUT4;
+			break;
+
+		case Chn5:
+			gLTC185x.ChData[ChConfig.ch].control 	|=	ADC_SINGLE_ENDED_INPUT5;
+			break;
+
+		case Chn6:
+			gLTC185x.ChData[ChConfig.ch].control 	|=	ADC_SINGLE_ENDED_INPUT6;
+			break;
+
+		case Chn7:
+			gLTC185x.ChData[ChConfig.ch].control 	|=	ADC_SINGLE_ENDED_INPUT7;
+			break;
+
+		case Chn01:
+			gLTC185x.ChData[ChConfig.ch].control 	|=	ADC_DIFFERENTIAL_EVEN_INPUT01;
+			break;
+
+		case Chn23:
+			gLTC185x.ChData[ChConfig.ch].control 	|=	ADC_DIFFERENTIAL_EVEN_INPUT23;
+			break;
+
+		case Chn45:
+			gLTC185x.ChData[ChConfig.ch].control 	|=	ADC_DIFFERENTIAL_EVEN_INPUT45;
+			break;
+
+		case Chn67:
+			gLTC185x.ChData[ChConfig.ch].control 	|=	ADC_DIFFERENTIAL_EVEN_INPUT67;
+			break;
+		
+	}
 	
-	printk("LTC185x: Ch%dSE_SETUP config=0x%lx enabled=%d .control=0x%x\n   buf={0x%lx 0x%lx} sz=%d samples\n",
-		Ch,
-		config, 
-		gLTC185x.ChData[Ch].enabled, 
-		gLTC185x.ChData[Ch].control,
-		(unsigned long) gLTC185x.ChData[Ch].bufferStart,
-		(unsigned long) gLTC185x.ChData[Ch].bufferEnd,
-		gLTC185x.ChData[Ch].bufferSize
-		);
+	
+	offset = (ChConfig.ch * ChSampleSize);
+	gLTC185x.ChData[ChConfig.ch].bufferStart  = (unsigned short*) gLTC185x.Buf + offset;
+	gLTC185x.ChData[ChConfig.ch].wrP 					= gLTC185x.ChData[ChConfig.ch].bufferStart;
+	gLTC185x.ChData[ChConfig.ch].rdP 					= gLTC185x.ChData[ChConfig.ch].wrP;
+	gLTC185x.ChData[ChConfig.ch].bufferSize		= ChSampleSize;
+	gLTC185x.ChData[ChConfig.ch].bufferEnd		= gLTC185x.ChData[ChConfig.ch].bufferStart + gLTC185x.ChData[ChConfig.ch].bufferSize;
+
+	// Set sampling period
+	gLTC185x.ChData[ChConfig.ch].trig 				= 	ChConfig.period / Timer1uSDivideRatio;
+	gLTC185x.ChData[ChConfig.ch].count 				= 	gLTC185x.ChData[ChConfig.ch].trig;
+
+	
+	printk("LTC185x: Ch%d config=0x%x\n control=0x%x\n buf={0x%lx 0x%lx}\n %d samples\n period=%ldus\n",
+		ChConfig.ch,
+		ChConfig.config, 
+		gLTC185x.ChData[ChConfig.ch].control,
+		(unsigned long) gLTC185x.ChData[ChConfig.ch].bufferStart,
+		(unsigned long) gLTC185x.ChData[ChConfig.ch].bufferEnd,
+		gLTC185x.ChData[ChConfig.ch].bufferSize,
+		ChConfig.period
+		);		
+	return 0;	
 }
 
 static int PrvReadData(unsigned int arg)
@@ -314,7 +368,10 @@ static int PrvReadData(unsigned int arg)
 	// Get data from user space
 	if (copy_from_user(&RdBufDat, (void __user*)arg, sizeof(ReadBufferData))) return -EFAULT;							
 
-	printk("PrvReadData rdP=0x%lx\n", (unsigned long) gLTC185x.ChData[RdBufDat.ch].rdP);
+	printk("PrvReadData Ch%d rdP=0x%lx\n", 
+		RdBufDat.ch,
+		(unsigned long) gLTC185x.ChData[RdBufDat.ch].rdP
+		);
 
 	// Check for an overun, set the user space variable to indicate this
 	if (gLTC185x.ChData[RdBufDat.ch].numSamples > ChSampleSize)
@@ -726,7 +783,8 @@ static irqreturn_t TimerINTHandler(int irq,void *TimDev)
 		gLTC185x.ChData[gLTC185x.rdCh].numSamples++;
 
 		// Record the sample in the appropriate buffer
-		printk("wrP(0x%lx)=0x%x, %d samples\n", 
+		printk("Ch%d wrP(0x%lx)=0x%x, %d samples\n", 
+			gLTC185x.rdCh,
 			(unsigned long) gLTC185x.ChData[gLTC185x.rdCh].wrP, 
 			*(gLTC185x.ChData[gLTC185x.rdCh].wrP-sampleSize), 
 			gLTC185x.ChData[gLTC185x.rdCh].numSamples
@@ -836,111 +894,10 @@ static int sbc2440_mzio_LTC185x_ioctl(
 			return PrvReadData(arg);
 
 		// -----------------------------------------------------
-		// ADC Channel setup routines
+		// ADC Channel setup routine
 		// -----------------------------------------------------
-		case MZIO_LTC185x_CH0SE_SETUP:	
-			PrvSetupChannel(Chn0, arg);
-			return 0;
-
-		case MZIO_LTC185x_CH0SE_SET_PERIOD:
-			PrvSetChannelPeriod(Chn0, arg);
-			return 0;
-
-		// -----------------------------------------------------
-		case MZIO_LTC185x_CH1SE_SETUP:	
-			PrvSetupChannel(Chn1, arg);
-			return 0;
-
-		case MZIO_LTC185x_CH1SE_SET_PERIOD:	
-			PrvSetChannelPeriod(Chn1, arg);
-			return 0;
-
-		// -----------------------------------------------------
-		case MZIO_LTC185x_CH2SE_SETUP:	
-			PrvSetupChannel(Chn2, arg);
-			return 0;
-
-		case MZIO_LTC185x_CH2SE_SET_PERIOD:	
-			PrvSetChannelPeriod(Chn2, arg);
-			return 0;
-
-		// -----------------------------------------------------
-		case MZIO_LTC185x_CH3SE_SETUP:	
-			PrvSetupChannel(Chn3, arg);
-			return 0;
-
-		case MZIO_LTC185x_CH3SE_SET_PERIOD:	
-			PrvSetChannelPeriod(Chn3, arg);
-			return 0;
-
-		// -----------------------------------------------------
-		case MZIO_LTC185x_CH4SE_SETUP:	
-			PrvSetupChannel(Chn4, arg);
-			return 0;
-
-		case MZIO_LTC185x_CH4SE_SET_PERIOD:	
-			PrvSetChannelPeriod(Chn4, arg);
-
-		// -----------------------------------------------------
-		case MZIO_LTC185x_CH5SE_SETUP:	
-			PrvSetupChannel(Chn5, arg);
-			return 0;
-
-		case MZIO_LTC185x_CH5SE_SET_PERIOD:
-			PrvSetChannelPeriod(Chn5, arg);
-			return 0;
-
-		// -----------------------------------------------------
-		case MZIO_LTC185x_CH6SE_SETUP:	
-			PrvSetupChannel(Chn6, arg);
-			return 0;
-
-		case MZIO_LTC185x_CH6SE_SET_PERIOD:	
-			PrvSetChannelPeriod(Chn6, arg);
-
-		// -----------------------------------------------------
-		case MZIO_LTC185x_CH7SE_SETUP:	
-			PrvSetupChannel(Chn7, arg);
-			return 0;
-
-		case MZIO_LTC185x_CH7SE_SET_PERIOD:	
-			PrvSetChannelPeriod(Chn7, arg);
-			return 0;
-
-		// -----------------------------------------------------
-		case MZIO_LTC185x_CH01DE_SETUP:	
-			PrvSetupChannel(Chn01, arg);
-			return 0;
-
-		case MZIO_LTC185x_CH01DE_SET_PERIOD:	
-			PrvSetChannelPeriod(Chn01, arg);
-			return 0;
-
-		// -----------------------------------------------------
-		case MZIO_LTC185x_CH23DE_SETUP:	
-			PrvSetupChannel(Chn23, arg);
-			return 0;
-
-		case MZIO_LTC185x_CH23DE_SET_PERIOD:	
-			PrvSetChannelPeriod(Chn23, arg);
-			return 0;
-			
-		// -----------------------------------------------------
-		case MZIO_LTC185x_CH45DE_SETUP:	
-			PrvSetupChannel(Chn45, arg);
-			return 0;
-
-		case MZIO_LTC185x_CH45DE_SET_PERIOD:	
-			PrvSetChannelPeriod(Chn45, arg);
-			return 0;
-
-		// -----------------------------------------------------
-		case MZIO_LTC185x_CH67DE_SETUP:	
-			PrvSetupChannel(Chn67, arg);
-			return 0;
-
-		case MZIO_LTC185x_CH67DE_SET_PERIOD:	
-			PrvSetChannelPeriod(Chn67, arg);
+		case MZIO_LTC185x_CHANNEL_SETUP:	
+			PrvSetChannelConfig(arg);
 			return 0;
 
 		// -----------------------------------------------------
