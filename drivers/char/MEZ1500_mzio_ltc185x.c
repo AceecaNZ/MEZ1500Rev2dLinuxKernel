@@ -79,7 +79,6 @@ static void __iomem *base_addr_GPIO;
                          ((((unsigned long) n) >> 24) & 0x000000FF))
 
 static LTC185x_DEV gLTC185x;
-unsigned long gIntCount1000ms=0;
 unsigned long gGPJDAT;
 unsigned int 	gTimerReloadValue;
 
@@ -133,13 +132,14 @@ static void PrvStartTimer(void)
   TimerCNTB = readl(S3C2410_TCNTB(2));
   TimerCMPB = readl(S3C2410_TCMPB(2));
 
+	// Calculating timer input clock frequency
   temp32 = pclk / (((TimerCfg0 & 0x0000FF00) >> 8) + 1) / 2;   // pclk / (prescalar + 1) / divider value (=2)
   // Note: Prescalar is set by system to be 2
   // Divider for mux2 is set at 1/2, divider value is 2
   
 	printk("Freq=%ld\n", temp32);
-  TimerCNTB = temp32/TimerFreq;
-  TimerCMPB = temp32/TimerFreq;
+  TimerCNTB = temp32/TimerIntFreq;
+  TimerCMPB = temp32/TimerIntFreq;
 
 	printk("TimerCNTB=%d\n", TimerCNTB);
 	printk("TimerCMPB=%d\n", TimerCMPB);
@@ -269,70 +269,71 @@ static void PrvLTC185xDeinit(void)
 
 static int PrvSetChannelConfig(unsigned int arg)
 {
-	ChConfigData ChConfig;
+	ChConfigDataType ChConfig;
 	unsigned long offset;
-	unsigned char	chSelection;
 	
 	// Get data from user space
-	if (copy_from_user(&ChConfig, (void __user*)arg, sizeof(ChConfigData))) return -EFAULT;							
+	if (copy_from_user(&ChConfig, (void __user*)arg, sizeof(ChConfigDataType))) return -EFAULT;							
 
 	gLTC185x.ChData[ChConfig.ch].enabled 			= 	(ChConfig.config && LTC185x_ChSetup_Enabled);
 	gLTC185x.ChData[ChConfig.ch].control 			= 	0;
-	gLTC185x.ChData[ChConfig.ch].control 			|=	(ChConfig.config & 0xFF00 >> 8);
+	gLTC185x.ChData[ChConfig.ch].control 			|=	((ChConfig.config >> 16) & 0xFF);
 	
-	switch(ChConfig.ch)
+	if (gLTC185x.ChData[ChConfig.ch].enabled)
 	{
-		case Chn0:
-			gLTC185x.ChData[ChConfig.ch].control 	|=	ADC_SINGLE_ENDED_INPUT0;
-			break;
-
-		case Chn1:
-			gLTC185x.ChData[ChConfig.ch].control 	|=	ADC_SINGLE_ENDED_INPUT0;
-			break;
-
-		case Chn2:
-			gLTC185x.ChData[ChConfig.ch].control 	|=	ADC_SINGLE_ENDED_INPUT2;
-			break;
-
-		case Chn3:
-			gLTC185x.ChData[ChConfig.ch].control 	|=	ADC_SINGLE_ENDED_INPUT3;
-			break;
-
-		case Chn4:
-			gLTC185x.ChData[ChConfig.ch].control 	|=	ADC_SINGLE_ENDED_INPUT4;
-			break;
-
-		case Chn5:
-			gLTC185x.ChData[ChConfig.ch].control 	|=	ADC_SINGLE_ENDED_INPUT5;
-			break;
-
-		case Chn6:
-			gLTC185x.ChData[ChConfig.ch].control 	|=	ADC_SINGLE_ENDED_INPUT6;
-			break;
-
-		case Chn7:
-			gLTC185x.ChData[ChConfig.ch].control 	|=	ADC_SINGLE_ENDED_INPUT7;
-			break;
-
-		case Chn01:
-			gLTC185x.ChData[ChConfig.ch].control 	|=	ADC_DIFFERENTIAL_EVEN_INPUT01;
-			break;
-
-		case Chn23:
-			gLTC185x.ChData[ChConfig.ch].control 	|=	ADC_DIFFERENTIAL_EVEN_INPUT23;
-			break;
-
-		case Chn45:
-			gLTC185x.ChData[ChConfig.ch].control 	|=	ADC_DIFFERENTIAL_EVEN_INPUT45;
-			break;
-
-		case Chn67:
-			gLTC185x.ChData[ChConfig.ch].control 	|=	ADC_DIFFERENTIAL_EVEN_INPUT67;
-			break;
-		
+		switch(ChConfig.ch)
+		{
+			case Chn0:
+				gLTC185x.ChData[ChConfig.ch].control 	|=	ADC_SINGLE_ENDED_INPUT0;
+				break;
+	
+			case Chn1:
+				gLTC185x.ChData[ChConfig.ch].control 	|=	ADC_SINGLE_ENDED_INPUT0;
+				break;
+	
+			case Chn2:
+				gLTC185x.ChData[ChConfig.ch].control 	|=	ADC_SINGLE_ENDED_INPUT2;
+				break;
+	
+			case Chn3:
+				gLTC185x.ChData[ChConfig.ch].control 	|=	ADC_SINGLE_ENDED_INPUT3;
+				break;
+	
+			case Chn4:
+				gLTC185x.ChData[ChConfig.ch].control 	|=	ADC_SINGLE_ENDED_INPUT4;
+				break;
+	
+			case Chn5:
+				gLTC185x.ChData[ChConfig.ch].control 	|=	ADC_SINGLE_ENDED_INPUT5;
+				break;
+	
+			case Chn6:
+				gLTC185x.ChData[ChConfig.ch].control 	|=	ADC_SINGLE_ENDED_INPUT6;
+				break;
+	
+			case Chn7:
+				gLTC185x.ChData[ChConfig.ch].control 	|=	ADC_SINGLE_ENDED_INPUT7;
+				break;
+	
+			case Chn01:
+				gLTC185x.ChData[ChConfig.ch].control 	|=	ADC_DIFFERENTIAL_EVEN_INPUT01;
+				break;
+	
+			case Chn23:
+				gLTC185x.ChData[ChConfig.ch].control 	|=	ADC_DIFFERENTIAL_EVEN_INPUT23;
+				break;
+	
+			case Chn45:
+				gLTC185x.ChData[ChConfig.ch].control 	|=	ADC_DIFFERENTIAL_EVEN_INPUT45;
+				break;
+	
+			case Chn67:
+				gLTC185x.ChData[ChConfig.ch].control 	|=	ADC_DIFFERENTIAL_EVEN_INPUT67;
+				break;
+			
+		}
 	}
-	
-	
+		
 	offset = (ChConfig.ch * ChSampleSize);
 	gLTC185x.ChData[ChConfig.ch].bufferStart  = (unsigned short*) gLTC185x.Buf + offset;
 	gLTC185x.ChData[ChConfig.ch].wrP 					= gLTC185x.ChData[ChConfig.ch].bufferStart;
@@ -340,19 +341,36 @@ static int PrvSetChannelConfig(unsigned int arg)
 	gLTC185x.ChData[ChConfig.ch].bufferSize		= ChSampleSize;
 	gLTC185x.ChData[ChConfig.ch].bufferEnd		= gLTC185x.ChData[ChConfig.ch].bufferStart + gLTC185x.ChData[ChConfig.ch].bufferSize;
 
-	// Set sampling period
-	gLTC185x.ChData[ChConfig.ch].trig 				= 	ChConfig.period / Timer1uSDivideRatio;
-	gLTC185x.ChData[ChConfig.ch].count 				= 	gLTC185x.ChData[ChConfig.ch].trig;
+	// Set min and max sampling period
+	if (ChConfig.periodUSecs > TimerCount1HrInUs) 
+		ChConfig.periodUSecs = TimerCount1HrInUs;
 
+	if (ChConfig.periodUSecs != 0 && ChConfig.periodUSecs < TimerIntFreq)
+		ChConfig.periodUSecs = TimerIntFreq;
+
+
+	// Note: Triggering one interrupt earlier to account for zero-to-trigger latency
+	if (ChConfig.periodUSecs)
+		gLTC185x.ChData[ChConfig.ch].trigUSecs	= 	(ChConfig.periodUSecs / TimerIntUsecs) - 1;
+	else
+		gLTC185x.ChData[ChConfig.ch].trigUSecs	= 	0;
+		
+	gLTC185x.ChData[ChConfig.ch].countUSecs		= 	gLTC185x.ChData[ChConfig.ch].trigUSecs;
+
+	gLTC185x.ChData[ChConfig.ch].trigHours		= 	ChConfig.periodHours;
+	gLTC185x.ChData[ChConfig.ch].countHours		= 	gLTC185x.ChData[ChConfig.ch].trigHours;
 	
-	printk("LTC185x: Ch%d config=0x%x\n control=0x%x\n buf={0x%lx 0x%lx}\n %d samples\n period=%ldus\n",
+	
+	printk("LTC185x: Ch%d config=0x%x\n control=0x%x\n buf={0x%lx 0x%lx}\n %d samples\n periodUSecs=%luus countUSecs=%lu countHours=%lu\n",
 		ChConfig.ch,
 		ChConfig.config, 
 		gLTC185x.ChData[ChConfig.ch].control,
 		(unsigned long) gLTC185x.ChData[ChConfig.ch].bufferStart,
 		(unsigned long) gLTC185x.ChData[ChConfig.ch].bufferEnd,
 		gLTC185x.ChData[ChConfig.ch].bufferSize,
-		ChConfig.period
+		ChConfig.periodUSecs,
+		gLTC185x.ChData[ChConfig.ch].countUSecs,
+		gLTC185x.ChData[ChConfig.ch].countHours
 		);		
 	return 0;	
 }
@@ -544,6 +562,8 @@ static int PrvReadData(unsigned int arg)
 			(unsigned long) gLTC185x.ChData[RdBufDat.ch].rdP, 
 			numBytes
 		);		
+		
+		return numSamplesToRead;
 	}
 	
 	return 0;	
@@ -643,25 +663,65 @@ static irqreturn_t TimerINTHandler(int irq,void *TimDev)
 		Ch++;
 		if (Ch>ChnMax) Ch=0;
 			
-		if (gLTC185x.ChData[Ch].enabled) {
-			if (gLTC185x.ChData[Ch].trig) {
-				if (gLTC185x.ChData[Ch].count) 
+		if (gLTC185x.ChData[Ch].enabled) 
+		{
+			if (gLTC185x.ChData[Ch].countUSecs) 
+			{
+				gLTC185x.ChData[Ch].countUSecs--;
+				
+				// Check to see if we have hours to decrement, if we don't then we know that the counter is now up
+				// and will sample on the next timer interrupt
+				if (gLTC185x.ChData[Ch].countUSecs == 0)
 				{
-					gLTC185x.ChData[Ch].count--;
-				} else {	
-					if (!triggered)
+					// If we have no countUSecs remaining, check countHours
+					if (gLTC185x.ChData[Ch].countHours--)
 					{						
-						// Update the write channel and read channels
-						gLTC185x.rdCh = gLTC185x.wrCh;
-						gLTC185x.wrCh = Ch;
-			
-						// Reset the Channel counter
-						// Note: Trigger happens after it has reached zero, not exactly on zero
-						gLTC185x.ChData[Ch].count = gLTC185x.ChData[Ch].trig - 1; 
-			
-						triggered = 1;
-						gLTC185x.readCnt++;
+						// If we still have countHours, we reload the usecs count register with another hour
+						gLTC185x.ChData[Ch].countUSecs = TimerCount1HrInUs/TimerIntUsecs;							
+						printk("INT:countUSecs=%lu  countHours=%lu\n", gLTC185x.ChData[Ch].countUSecs, gLTC185x.ChData[Ch].countHours);
 					}
+				}
+			} 
+			else 
+			{	
+				if (!triggered)
+				{						
+					// Update the write channel and read channels
+					gLTC185x.rdCh = gLTC185x.wrCh;
+					gLTC185x.wrCh = Ch;
+		
+					// Reset the Channel countUSecs and countHours
+					// Note: Trigger happens after it has reached zero, not exactly on zero
+					if (gLTC185x.ChData[Ch].trigUSecs)
+					{
+						gLTC185x.ChData[Ch].countUSecs = gLTC185x.ChData[Ch].trigUSecs; 
+						gLTC185x.ChData[Ch].countHours = gLTC185x.ChData[Ch].trigHours;
+						printk("INT1:countUSecs=%lu  countHours=%lu!!!\n", gLTC185x.ChData[Ch].countUSecs, gLTC185x.ChData[Ch].countHours);
+					} 
+					else
+					{
+						if (gLTC185x.ChData[Ch].trigHours)
+						{ 	
+							// If trigHours is non-zero, we reset the countHours to trigHours-1, and set countUSecs to 1 hour
+							gLTC185x.ChData[Ch].countHours = gLTC185x.ChData[Ch].trigHours-1;
+							gLTC185x.ChData[Ch].countUSecs = TimerCount1HrInUs/TimerIntUsecs; 
+							printk("INT2:countUSecs=%lu  countHours=%lu!!!\n", gLTC185x.ChData[Ch].countUSecs, gLTC185x.ChData[Ch].countHours);
+						}
+						else
+						{
+							// If trigHours is zero, we ensure that countHours is also zero
+							gLTC185x.ChData[Ch].countHours = 0; 
+							gLTC185x.ChData[Ch].countUSecs = 0; 
+							printk("INT3:countUSecs=%lu  countHours=%lu!!!\n", gLTC185x.ChData[Ch].countUSecs, gLTC185x.ChData[Ch].countHours);
+						}
+					}
+							
+					// Only 1 channel triggers at a time, if there is more than one channel that needs to sample
+					// the next channel to sample occurs at the next timer interrupt, and hence offsets future
+					// trigger event for that channel against other simultaneous triggers (unless there are odd
+					// sampling period values).
+					triggered = 1;
+					gLTC185x.readCnt++;
 				}
 			}
 		}
@@ -783,28 +843,22 @@ static irqreturn_t TimerINTHandler(int irq,void *TimDev)
 		gLTC185x.ChData[gLTC185x.rdCh].numSamples++;
 
 		// Record the sample in the appropriate buffer
-		printk("Ch%d wrP(0x%lx)=0x%x, %d samples\n", 
-			gLTC185x.rdCh,
-			(unsigned long) gLTC185x.ChData[gLTC185x.rdCh].wrP, 
-			*(gLTC185x.ChData[gLTC185x.rdCh].wrP-sampleSize), 
-			gLTC185x.ChData[gLTC185x.rdCh].numSamples
-			);
+//		printk("Ch%d wrP(0x%lx)=0x%x, %d samples\n", 
+//			gLTC185x.rdCh,
+//			(unsigned long) gLTC185x.ChData[gLTC185x.rdCh].wrP, 
+//			*(gLTC185x.ChData[gLTC185x.rdCh].wrP-sampleSize), 
+//			gLTC185x.ChData[gLTC185x.rdCh].numSamples
+//			);
 
 		// Wrap around if necessary
 		if (gLTC185x.ChData[gLTC185x.rdCh].wrP >= gLTC185x.ChData[gLTC185x.rdCh].bufferEnd)
 		{
-			printk("wrP wrapped\n"); 			
+//			printk("wrP wrapped\n"); 			
 			gLTC185x.ChData[gLTC185x.rdCh].wrP = gLTC185x.ChData[gLTC185x.rdCh].bufferStart;
 		}
 	}
 	
 exit:
-  if (gIntCount1000ms-- == 0)
-  {
-//		printk("Beep\n");
-//		gIntCount1000ms = Timer1000ms*5;
-	}
-
 	gLTC185x.InIRQ = 0;
 
 	// Debug toggle
@@ -875,7 +929,6 @@ static int sbc2440_mzio_LTC185x_ioctl(
 			gLTC185x.wrCh			=	ChnMax;
 			gLTC185x.readCnt	=	ReadCntStart;
 			gLTC185x.skipRead	=	1;
-			gIntCount1000ms 	= Timer1000ms*5;
 			gLTC185x.IsOn 		= 1;
 
 			// Zero the sample buffer
@@ -1015,8 +1068,7 @@ static int __init dev_init(void)
 
 	printk(DEVICE_NAME"\tversion %d%02d%02d%02d%02d\tinitialized\n", GetCompileYear(),
 	GetCompileMonth(), GetCompileDay(), GetCompileHour(), GetCompileMinute());
-
-
+	
 	// Zero the globals
 	memset(&gLTC185x, 0, sizeof(LTC185x_DEV));
 

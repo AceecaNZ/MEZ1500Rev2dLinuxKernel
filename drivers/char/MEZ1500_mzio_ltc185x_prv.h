@@ -3,9 +3,11 @@
 
 #include "MEZ1500_mzio_ltc185x.h"
 
-#define TimerFreq						100000*2 // Hz, 10us*2
-#define Timer1000ms					TimerFreq
-#define Timer1uSDivideRatio	10/2
+#define TimerIntFreq				50000 	// per=20us, f=50khz
+#define TimerIntUsecs				20 			// 
+
+#define Timer1000ms					TimerPeriodSecs
+//#define Timer1uSDivideRatio	5					//(10/2)
 
 #ifndef ON
   #define ON  true
@@ -282,10 +284,12 @@
 #define sampleSize									sizeof(unsigned short)
 
 typedef struct {
-	unsigned char	enabled;				// 1=enabled, 0=disabled
-  unsigned char control;				// Control byte for CHx
-  unsigned long	count;					// Sampling delay counter
-  unsigned long	trig;						// trigger for setting time between samples
+	unsigned char		enabled;				// 1=enabled, 0=disabled
+  unsigned char 	control;				// Control byte for CHx
+  unsigned long 	countUSecs;			// Sampling delay counter in microseconds (up to 1 hour)
+ 	unsigned long 	trigUSecs;			// trigger value in useconds (up to 1 hour)
+  unsigned long		countHours;			// Sampling delay in terms of hours 
+ 	unsigned long 	trigHours;			// trigger value in hours
   
   unsigned short	*wrP;						// write pointer to user space buffer
   unsigned short	*rdP;						// read pointer to user space buffer

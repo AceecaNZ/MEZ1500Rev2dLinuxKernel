@@ -1,6 +1,8 @@
 #ifndef __MEZ1500_MZIO_LTC185x_H__
 #define __MEZ1500_MZIO_LTC185x_H__ 1
 
+#define TimerCount1HrInUs		3600000000LL
+
 // MZIO LTC185x IOCTL routines
 // Init/Deinit routines
 #define MZIO_LTC185x_INIT                   _IOWR(0,0,int)
@@ -48,10 +50,14 @@ typedef struct {
 } ReadBufferData;
 
 typedef struct {
-  unsigned short  ch;             // channel
-  unsigned int   	config;         // the config tuple for the channel
-  unsigned long   period;         // the sampling period of the channel in us, minimum is 50us
-} ChConfigData;
+  unsigned short      ch;           // channel
+  unsigned int        config;       // the config tuple for the channel
+  unsigned long       periodUSecs;  // the sampling period of the channel in us, minimum is 50us, up to TimerCount1HrInUs MAX
+  																	// Values greater than TimerCount1HrInUs will be truncated to TimerCount1HrInUs
+  unsigned long       periodHours;  // the extended sampling period of hours  
+  
+  // Note: 
+} ChConfigDataType;
 
 #define ChSampleSize 170        // Makes a 4096 page
 //#define ChSampleSize 10
@@ -74,11 +80,6 @@ typedef struct {
 #define Ch0Filename "/tmp/LTC185x_Ch0.bin"
 #define bufferSampleSize  1000
 #define filesize          (bufferSampleSize * sizeof(int));
-
-struct mmap_tmpFile_info {
-  char *data; /* the data */
-  int reference;       /* how many times it is mmapped */
-};
 
 
 #endif  // __MEZ1500_MZIO_LTC185x_H__
