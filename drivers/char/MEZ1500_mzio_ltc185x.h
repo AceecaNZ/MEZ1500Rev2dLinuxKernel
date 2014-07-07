@@ -23,8 +23,7 @@
 
 // ADC Channel setup
 #define LTC185x_ChSetup_Enabled             0x80000000    // Set to enable, clear to disable
-#define LTC185x_ChSetup_OddEven             0x00400000    // set for Odd, clear for even, differential channels only
-#define LTC185x_ChSetup_UniBi               0x00800000    // Set to be unipolar, clear to be bipolar
+#define LTC185x_ChSetup_UniBi               0x00080000    // Set to be unipolar, clear to be bipolar
 #define LTC185x_ChSetup_Gain                0x00040000    // Set to be 0-5V/-+5V, clear to be 0-10V/-+10V
 
 // ADC Channel select
@@ -59,7 +58,7 @@ typedef struct {
   // Note: 
 } ChConfigDataType;
 
-#define ChSampleSize 170        // Makes a 4096 page
+#define ChSampleSize 50000 //170        // Makes a 4096 page
 //#define ChSampleSize 10
 typedef struct {
   unsigned short  Ch0Buf[ChSampleSize];

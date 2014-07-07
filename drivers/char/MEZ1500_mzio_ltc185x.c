@@ -225,7 +225,7 @@ static void PrvLTC185xInit(void)
 	
 	// Set prescaler value,
 	// Note: LTC185x only supports up to 20MHz tops, closest configuration with PCLK=50MHz, is for 12.5MHz.  baud=PCLK/2/(prescaler+1)
-	SPPRE=1;
+	SPPRE=2;
 	
 	printk("LTC185x: Init--\n");	
 }
@@ -274,6 +274,9 @@ static int PrvSetChannelConfig(unsigned int arg)
 	
 	// Get data from user space
 	if (copy_from_user(&ChConfig, (void __user*)arg, sizeof(ChConfigDataType))) return -EFAULT;							
+
+	// Check that periodUSecs is non-zero
+	if (ChConfig.config && !ChConfig.periodUSecs) return -EFAULT;
 
 	gLTC185x.ChData[ChConfig.ch].enabled 			= 	(ChConfig.config && LTC185x_ChSetup_Enabled);
 	gLTC185x.ChData[ChConfig.ch].control 			= 	0;
@@ -345,23 +348,19 @@ static int PrvSetChannelConfig(unsigned int arg)
 	if (ChConfig.periodUSecs > TimerCount1HrInUs) 
 		ChConfig.periodUSecs = TimerCount1HrInUs;
 
-	if (ChConfig.periodUSecs != 0 && ChConfig.periodUSecs < TimerIntFreq)
-		ChConfig.periodUSecs = TimerIntFreq;
+	if (ChConfig.periodUSecs != 0 && ChConfig.periodUSecs < TimerIntUsecs)
+		ChConfig.periodUSecs = TimerIntUsecs;
 
 
 	// Note: Triggering one interrupt earlier to account for zero-to-trigger latency
-	if (ChConfig.periodUSecs)
-		gLTC185x.ChData[ChConfig.ch].trigUSecs	= 	(ChConfig.periodUSecs / TimerIntUsecs) - 1;
-	else
-		gLTC185x.ChData[ChConfig.ch].trigUSecs	= 	0;
-		
+	gLTC185x.ChData[ChConfig.ch].trigUSecs	= 	(ChConfig.periodUSecs / TimerIntUsecs);	
 	gLTC185x.ChData[ChConfig.ch].countUSecs		= 	gLTC185x.ChData[ChConfig.ch].trigUSecs;
 
 	gLTC185x.ChData[ChConfig.ch].trigHours		= 	ChConfig.periodHours;
 	gLTC185x.ChData[ChConfig.ch].countHours		= 	gLTC185x.ChData[ChConfig.ch].trigHours;
 	
 	
-	printk("LTC185x: Ch%d config=0x%x\n control=0x%x\n buf={0x%lx 0x%lx}\n %d samples\n periodUSecs=%luus countUSecs=%lu countHours=%lu\n",
+	printk("LTC185x: Ch%d\n config=0x%x\n control=0x%x\n buf={0x%lx 0x%lx}\n %d samples\n periodUSecs=%luus countUSecs=%lu countHours=%lu\n",
 		ChConfig.ch,
 		ChConfig.config, 
 		gLTC185x.ChData[ChConfig.ch].control,
@@ -696,7 +695,7 @@ static irqreturn_t TimerINTHandler(int irq,void *TimDev)
 					{
 						gLTC185x.ChData[Ch].countUSecs = gLTC185x.ChData[Ch].trigUSecs; 
 						gLTC185x.ChData[Ch].countHours = gLTC185x.ChData[Ch].trigHours;
-						printk("INT1:countUSecs=%lu  countHours=%lu!!!\n", gLTC185x.ChData[Ch].countUSecs, gLTC185x.ChData[Ch].countHours);
+//						printk("INT1:countUSecs=%lu  countHours=%lu!!!\n", gLTC185x.ChData[Ch].countUSecs, gLTC185x.ChData[Ch].countHours);
 					} 
 					else
 					{
@@ -741,7 +740,7 @@ static irqreturn_t TimerINTHandler(int irq,void *TimDev)
 		// Write new data to ADC for conversion
 		// ---------------------------------------------
 
-//			printk("Ch%d write\n", gLTC185x.wrCh);								
+//		printk("Ch%d write %x\n", gLTC185x.wrCh, gLTC185x.ChData[gLTC185x.wrCh].control);								
 			
 		// Assert RD line low, set CONVST to low as well
 		gGPJDAT = readl(S3C2440_GPJDAT);
@@ -751,13 +750,21 @@ static irqreturn_t TimerINTHandler(int irq,void *TimDev)
 		// Send the SPI control code 	
 		// Send control byte
 		SPTDAT = gLTC185x.ChData[gLTC185x.wrCh].control;
+//		printk("SPTDAT 0x%lx\n", (unsigned long)&SPTDAT);
+
 		// Wait until full 8 bits are sent
 		while (!(SPSTA & S3C2410_SPSTA_READY)) continue;
 		sampleH = SPRDAT;
+	
+//		printk("SPRDAT 0x%lx = 0x%xH\n", (unsigned long)&SPRDAT, sampleH);
+
 				
 		SPTDAT = 0xFF;
 		while (!(SPSTA & S3C2410_SPSTA_READY)) continue;
 		sampleL = SPRDAT;
+
+//		printk("SPRDAT 0x%lx = 0x%xL\n", (unsigned long)&SPRDAT, sampleL);
+
 	
 		// CONVST high, trigger conversion, also disable read enable
 		gGPJDAT |= (bDAT_ADC_CNV_START_CAM_DATA6|bDAT_ADC_RD_EN_N_CAM_DATA5);												
@@ -769,10 +776,7 @@ static irqreturn_t TimerINTHandler(int irq,void *TimDev)
 		if (gLTC185x.skipRead == 0)
 		{
 			if (gLTC185x.readCnt > 0)
-			{				
-				// Assemble the sample value if we need to do a read
-				sampleValue = (sampleL << 8) | sampleH;
-				
+			{								
 				// Decrement the read count
 				gLTC185x.readCnt--;
 	
@@ -799,25 +803,19 @@ static irqreturn_t TimerINTHandler(int irq,void *TimDev)
 				 	
 			// Send the SPI control code 	
 			// Send control byte
-//			sampleH = PrvSPISendReceiveData(0xFF); 		
-			// Sending dummy
-//			sampleL = PrvSPISendReceiveData(0xFF);	  																
 			SPTDAT = gLTC185x.ChData[gLTC185x.wrCh].control;
 			// Wait until full 8 bits are sent
 			while (!(SPSTA & S3C2410_SPSTA_READY)) continue;
 			sampleH = SPRDAT;
-	
+
 			SPTDAT = 0xFF;
 			while (!(SPSTA & S3C2410_SPSTA_READY)) continue;
 			sampleL = SPRDAT;
-
 		
-			// CONVST high, trigger conversion, also disable read enable
+			// Disable read enable
 			gGPJDAT |= (bDAT_ADC_RD_EN_N_CAM_DATA5);												
 			writel(gGPJDAT,S3C2440_GPJDAT);
 				
-			sampleValue = (sampleL << 8) | sampleH;
-	
 			// Reset the read count
 			gLTC185x.readCnt 	= ReadCntStart;
 			
@@ -833,6 +831,8 @@ static irqreturn_t TimerINTHandler(int irq,void *TimDev)
 	
 	if (takeReading)
 	{
+		sampleValue = (sampleH << 8) | sampleL;
+
 		// Write the sample value to a temporary buffer that will be handled by the tasklet	
 		gLTC185x.sampleValue = sampleValue;
 
@@ -841,6 +841,10 @@ static irqreturn_t TimerINTHandler(int irq,void *TimDev)
 
 		*gLTC185x.ChData[gLTC185x.rdCh].wrP++ = sampleValue;
 		gLTC185x.ChData[gLTC185x.rdCh].numSamples++;
+
+		printk("sH=0x%x\n", sampleH);
+		printk("sL=0x%x\n", sampleL);
+		printk("s=0x%x\n", sampleValue);
 
 		// Record the sample in the appropriate buffer
 //		printk("Ch%d wrP(0x%lx)=0x%x, %d samples\n", 
@@ -934,6 +938,16 @@ static int sbc2440_mzio_LTC185x_ioctl(
 			// Zero the sample buffer
 			memset(gLTC185x.Buf, 0, sizeof(BufData));
 
+			// Reset all channel buffers
+			{
+				int i;
+				for (i=Chn0; i<=ChnMax; i++)
+				{
+					gLTC185x.ChData[i].wrP 					= gLTC185x.ChData[i].bufferStart;
+					gLTC185x.ChData[i].rdP 					= gLTC185x.ChData[i].wrP;
+					gLTC185x.ChData[i].numSamples 	= 0;
+				}
+			}
 			PrvStartTimer();
 			
 			printk("LTC185x: Start--\n");
@@ -950,8 +964,7 @@ static int sbc2440_mzio_LTC185x_ioctl(
 		// ADC Channel setup routine
 		// -----------------------------------------------------
 		case MZIO_LTC185x_CHANNEL_SETUP:	
-			PrvSetChannelConfig(arg);
-			return 0;
+			return PrvSetChannelConfig(arg);
 
 		// -----------------------------------------------------
 		// 5V power control
