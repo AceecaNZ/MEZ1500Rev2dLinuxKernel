@@ -812,5 +812,13 @@
 #define S3C2412_SLPCON_ALL_IN  	(0x22222222 | 0x88888888)
 #define S3C2412_SLPCON_ALL_PULL	(0x33333333)
 
+#define S3C2410_GPIONO(bank,offset) ((bank) + (offset))
+
+#define S3C2410_GPC5            S3C2410_GPIONO(S3C2410_GPIO_BANKC, 5)
+#define S3C2410_GPC5_INP        (0x00 << 10)
+#define S3C2410_GPC5_OUTP       (0x01 << 10)
+#define S3C2410_GPC5_LCDVF0     (0x02 << 10)
+#define S3C2400_GPC5_VD5        (0x02 << 10)
+
 #endif	/* __ASM_ARCH_REGS_GPIO_H */
 

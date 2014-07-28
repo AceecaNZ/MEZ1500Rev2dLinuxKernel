@@ -1729,6 +1729,8 @@ static int do_write(struct fsg_dev *fsg)
 
 	while (amount_left_to_write > 0) {
 
+//		printk("==> writing %d bytes\n", amount_left_to_write);
+
 		/* Queue a request for more data from the host */
 		bh = fsg->next_buffhd_to_fill;
 		if (bh->state == BUF_STATE_EMPTY && get_some_more) {
@@ -1821,6 +1823,9 @@ static int do_write(struct fsg_dev *fsg)
 					(int) nwritten);
 			if (signal_pending(current))
 				return -EINTR;		// Interrupted!
+
+//		printk("     7\n");
+
 
 			if (nwritten < 0) {
 				LDBG(curlun, "error in file write: %d\n",

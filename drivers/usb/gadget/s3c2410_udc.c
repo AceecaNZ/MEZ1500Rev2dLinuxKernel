@@ -51,6 +51,7 @@
 #include <mach/irqs.h>
 
 #include <mach/hardware.h>
+#include <mach/regs-gpio.h>
 
 #include <plat/regs-udc.h>
 #include <plat/udc.h>
@@ -845,6 +846,7 @@ static void s3c2410_udc_handle_ep(struct s3c2410_ep *ep)
 	u32			ep_csr1;
 	u32			idx;
 
+handle_ep_again:
 	if (likely (!list_empty(&ep->queue)))
 		req = list_entry(ep->queue.next,
 				struct s3c2410_request, queue);
@@ -884,6 +886,9 @@ static void s3c2410_udc_handle_ep(struct s3c2410_ep *ep)
 
 		if ((ep_csr1 & S3C2410_UDC_OCSR1_PKTRDY) && req) {
 			s3c2410_udc_read_fifo(ep,req);
+
+		 if (s3c2410_udc_fifo_count_out())
+       goto handle_ep_again;
 		}
 	}
 }
@@ -2028,6 +2033,13 @@ static int __init udc_init(void)
 	retval = platform_driver_register(&udc_driver_2410);
 	if (retval)
 		goto err;
+		
+ 	//added by sudip
+ 	//GPC5 configure as output and make high 
+// 	s3c2410_gpio_cfgpin(S3C2410_GPH10,S3C2410_GPH10_OUTP);
+// 	s3c2410_gpio_setpin(S3C2410_GPH10,0);
+// 	sleep(1000);
+// 	s3c2410_gpio_setpin(S3C2410_GPH10,1);
 
 	retval = platform_driver_register(&udc_driver_2440);
 	if (retval)
@@ -2042,6 +2054,11 @@ err:
 
 static void __exit udc_exit(void)
 {
+ 	//added by sudip
+ 	// GPH10 turn low and make input
+// 	s3c2410_gpio_cfgpin(S3C2410_GPH10,S3C2410_GPH10_OUTP);
+// 	s3c2410_gpio_setpin(S3C2410_GPH10,0);
+  
 	platform_driver_unregister(&udc_driver_2410);
 	platform_driver_unregister(&udc_driver_2440);
 	debugfs_remove(s3c2410_udc_debugfs_root);
